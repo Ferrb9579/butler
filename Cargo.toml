@@ -1,0 +1,8 @@
+[package]
+name = "butler"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+
+[dependencies]
+incular = { git = "https://github.com/FabortLabs/incular.git", rev = "71feef92286dfd6f8accd9c17c14f292da746490", default-features = false, features = ["desktop"] }
