@@ -9,3 +9,4 @@
 - Installed the required Linux development files in the cloud workspace. `cargo check --locked` passed on Rust 1.100.
 - Installed T3 Code's pinned Node 26.13.1 and pnpm 12.14.0. Reference dependencies and runtime capture are still pending.
 - Added the first native workspace shell with editable search and prompt fields. The locked compile check passed. Live reference capture is blocked by the npm registry restriction and an incomplete offline cache.
+- The full native build passed after fixing workspace-local library links. Added a matched screenshot naming workflow. A verified T3 Code and Butler image pair is still pending.

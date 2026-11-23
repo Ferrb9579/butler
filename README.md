@@ -21,11 +21,12 @@ then run `cargo run`. Cargo fetches Incular from the Git revision in
 3. Run the comparison with Node.js and ImageMagick 7 installed.
 
    ```sh
-   scripts/compare-ui.sh http://localhost:5173 'main' 0x4600007
+   scripts/compare-ui.sh new-thread-empty http://localhost:5173 'main' 0x4600007
    ```
 
-The script captures T3 Code at Butler's client dimensions and writes both PNGs,
-a diff, and the differing pixel count under `artifacts/ui`. Exit status 1
+The script captures T3 Code at Butler's client dimensions and saves matching
+PNGs under `screenshots/t3` and `screenshots/butler`. Diffs and differing pixel
+counts go under `artifacts/ui`. Exit status 1
 indicates a visual difference. The URL, selector, and window ID above are
 examples. Set `T3_STORAGE_STATE` to a local Playwright storage-state file if
 the reference screen requires sign-in. Keep that file outside the repo.
