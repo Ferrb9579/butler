@@ -1,7 +1,6 @@
 # Butler
 
-Native Rust desktop application using Incular. The first window is a startup
-smoke test.
+Native Rust desktop application using Incular. The initial workspace includes a sidebar and an editable prompt.
 
 ## Run
 
