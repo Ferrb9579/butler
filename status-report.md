@@ -6,3 +6,5 @@
 - Pinned Incular to Git commit `71feef92286dfd6f8accd9c17c14f292da746490` and checked out T3 Code at `3f09ad91` as the reference.
 - Installed Rust and Cargo 1.100. Cargo resolved dependencies. The first build check stopped at missing Linux Fontconfig development files.
 - Shell and JavaScript syntax checks passed. The first Butler window is a startup smoke test. Reference captures, pixel comparison, and interaction parity remain pending.
+- Installed the required Linux development files in the cloud workspace. `cargo check --locked` passed on Rust 1.100.
+- Installed T3 Code's pinned Node 26.13.1 and pnpm 12.14.0. Reference dependencies and runtime capture are still pending.
