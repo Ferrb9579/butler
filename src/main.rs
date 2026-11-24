@@ -7,7 +7,7 @@ use butler::{
     landing::{Landing, resolve_landing},
     onboarding::{Route, StartupEvidence},
     profile::Profile,
-    projects::LocalProjects,
+    projects::{FolderListing, LocalProjects},
 };
 use incular::prelude::*;
 use project_picker::Picker;
@@ -17,12 +17,13 @@ use std::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    incular::run(application(profile_root(), machine_label())?)?;
+    incular::run(application(profile_root(), local_home(), machine_label())?)?;
     Ok(())
 }
 
 fn application(
     state: Option<PathBuf>,
+    home: Option<PathBuf>,
     device: String,
 ) -> Result<Application, Box<dyn std::error::Error>> {
     let profile = state.as_ref().map(Profile::new);
@@ -42,6 +43,8 @@ fn application(
             .map(|e| format!("Could not load saved projects: {e}")),
     );
     let picker = Signal::new(Picker::Closed);
+    let browse = Signal::new(None::<FolderListing>);
+    let browse_error = Signal::new(None::<String>);
     let path = TextEditingController::new();
     let completed = profile
         .as_ref()
@@ -123,6 +126,9 @@ fn application(
                 workspace,
                 picker.clone(),
                 path.clone(),
+                home.clone(),
+                browse.clone(),
+                browse_error.clone(),
                 picker_error.get(),
                 move |input| {
                     let result = projects
@@ -147,6 +153,13 @@ fn application(
         Directionality::new(TextDirection::Ltr, root).into()
     })?;
     Ok(app)
+}
+
+fn local_home() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
 }
 
 fn profile_root() -> Option<PathBuf> {
@@ -221,7 +234,8 @@ mod ui_tests {
         Profile::new(&profile).complete_onboarding().unwrap();
         let canonical = root.canonicalize().unwrap();
         let path = root.to_str().unwrap().to_owned();
-        let mut app = application(Some(profile.clone()), "Fixture".into()).unwrap();
+        let mut app =
+            application(Some(profile.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut app, move |sim| {
             sim.click("＋ Add project").expect("open source picker");
             sim.click("Local folder")
@@ -235,7 +249,8 @@ mod ui_tests {
         assert_eq!(saved[0].root, canonical);
         assert!(fs::read_dir(&root).unwrap().next().is_none());
         drop(app);
-        let mut reopened = application(Some(profile), "Fixture".into()).unwrap();
+        let mut reopened =
+            application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut reopened, |sim| {
             sim.click("Native test folder")
                 .expect("reopened UI displays the imported project");
@@ -244,5 +259,25 @@ mod ui_tests {
                 "reopened application must not show the empty workspace"
             );
         });
+    }
+    #[test]
+    fn traverses_children_and_imports_the_displayed_directory() {
+        let tmp = Fixture::new();
+        let home = tmp.0.join("Home");
+        let root = home.join("Category").join("Browsable project");
+        let profile = tmp.0.join("profile");
+        fs::create_dir_all(&root).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let mut app = application(Some(profile.clone()), Some(home), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("＋ Add project").unwrap();
+            sim.click("Local folder").unwrap();
+            sim.click("Category").unwrap();
+            sim.click("Browsable project").unwrap();
+            sim.click("Open folder").unwrap();
+        });
+        let projects = LocalProjects::new(profile).list().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].root, root.canonicalize().unwrap());
     }
 }

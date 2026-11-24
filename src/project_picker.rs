@@ -6,6 +6,9 @@ use incular::{
     widgets::{BackdropFilter, internal::ActionSurface},
 };
 
+use butler::projects::FolderListing;
+use std::path::PathBuf;
+
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, label, space};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,6 +22,9 @@ pub fn overlay(
     workspace: Widget,
     step: Signal<Picker>,
     path: TextEditingController,
+    home: Option<PathBuf>,
+    browse: Signal<Option<FolderListing>>,
+    browse_error: Signal<Option<String>>,
     error: Option<String>,
     submit: impl Fn(String) + 'static,
 ) -> Widget {
@@ -78,8 +84,17 @@ pub fn overlay(
                 .label("Local folder")
                 .size(Size::new(574.0, 48.0))
                 .hover_color(Color::rgba(241, 241, 244, 255))
-                .on_press(move || {
-                    step.set(Picker::Local);
+                .on_press({
+                    let browse = browse.clone();
+                    let browse_error = browse_error.clone();
+                    move || {
+                        browse.set(None);
+                        browse_error.set(None);
+                        if let Some(home) = &home {
+                            navigate(home.clone(), &browse, &browse_error);
+                        }
+                        step.set(Picker::Local);
+                    }
                 })
                 .into(),
             );
@@ -93,19 +108,68 @@ pub fn overlay(
             ));
         }
         Picker::Local => {
+            let listing = browse.get();
+            let current = listing.as_ref().map(|value| value.directory.clone());
             rows.push(row(
                 28.0,
-                label("Local folder", 12.0, FontWeight::W500, MUTED),
+                label("Directories", 12.0, FontWeight::W500, MUTED),
             ));
             rows.push(row(
                 44.0,
-                short_action("Open folder", move || submit(path.text())),
+                short_action("Open folder", {
+                    let path = path.clone();
+                    let current = current.clone();
+                    move || {
+                        let text = path.text();
+                        if text.is_empty() {
+                            if let Some(dir) = current.as_ref().and_then(|d| d.to_str()) {
+                                submit(dir.to_owned());
+                                return;
+                            }
+                        }
+                        submit(text);
+                    }
+                }),
             ));
-            if let Some(error) = error {
+            if let Some(listing) = listing {
+                let mut dirs = Vec::new();
+                if let Some(parent) = listing.directory.parent().map(PathBuf::from) {
+                    dirs.push(browse_action(
+                        "Parent directory",
+                        parent,
+                        browse.clone(),
+                        browse_error.clone(),
+                        path.clone(),
+                    ));
+                }
+                for (name, target) in listing.children {
+                    dirs.push(browse_action(
+                        &name,
+                        target,
+                        browse.clone(),
+                        browse_error.clone(),
+                        path.clone(),
+                    ));
+                }
+                if !dirs.is_empty() {
+                    let list_height = (dirs.len() as f32 * 32.0).min(224.0);
+                    rows.push(
+                        Container::new()
+                            .height(list_height)
+                            .child(SingleChildScrollView::new(
+                                Column::new(dirs)
+                                    .main_axis_size(MainAxisSize::Min)
+                                    .cross_axis_alignment(CrossAxisAlignment::Stretch),
+                            ))
+                            .into(),
+                    );
+                }
+            }
+            for message in [browse_error.get(), error].into_iter().flatten() {
                 rows.push(row(
                     30.0,
                     label(
-                        &error,
+                        &message,
                         13.0,
                         FontWeight::W400,
                         Color::rgba(161, 38, 38, 255),
@@ -204,5 +268,42 @@ fn short_action(text: &str, click: impl Fn() + 'static) -> Widget {
                 ),
         )
         .on_click(click)
+        .into()
+}
+
+fn navigate(
+    target: PathBuf,
+    browse: &Signal<Option<FolderListing>>,
+    error: &Signal<Option<String>>,
+) -> bool {
+    match FolderListing::read(&target) {
+        Ok(listing) => {
+            error.set(None);
+            browse.set(Some(listing));
+            true
+        }
+        Err(problem) => {
+            error.set(Some(format!("Could not browse folder: {problem}")));
+            false
+        }
+    }
+}
+
+fn browse_action(
+    name: &str,
+    target: PathBuf,
+    browse: Signal<Option<FolderListing>>,
+    error: Signal<Option<String>>,
+    path: TextEditingController,
+) -> Widget {
+    ActionSurface::with_child(row(32.0, label(name, 14.0, FontWeight::W400, INK)))
+        .size(Size::new(574.0, 32.0))
+        .label(name)
+        .hover_color(Color::rgba(241, 241, 244, 255))
+        .on_press(move || {
+            if navigate(target.clone(), &browse, &error) {
+                path.set_text(target.to_string_lossy().into_owned());
+            }
+        })
         .into()
 }

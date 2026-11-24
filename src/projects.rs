@@ -213,3 +213,62 @@ mod tests {
         assert_eq!(store.list().unwrap().len(), 2);
     }
 }
+
+/// Visible children for the local-folder palette. This only reads directory
+/// entries, never project files or Git metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FolderListing {
+    pub directory: PathBuf,
+    pub children: Vec<(String, PathBuf)>,
+}
+
+impl FolderListing {
+    pub fn read(path: &Path) -> io::Result<Self> {
+        let directory = path.canonicalize()?;
+        let mut children = fs::read_dir(&directory)?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                if name.starts_with('.') {
+                    return None;
+                }
+                let path = entry.path();
+                path.is_dir().then_some((name, path))
+            })
+            .collect::<Vec<_>>();
+        children.sort_by_cached_key(|(name, _)| (name.to_lowercase(), name.clone()));
+        Ok(Self {
+            directory,
+            children,
+        })
+    }
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::*;
+
+    #[test]
+    fn lists_visible_directories_in_case_insensitive_order() {
+        let path =
+            std::env::temp_dir().join(format!("butler-folder-list-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&path).unwrap();
+        let result = (|| {
+            for name in ["Zoo", ".hidden", "alpha"] {
+                fs::create_dir(path.join(name))?;
+            }
+            fs::write(path.join("notes"), "not listed")?;
+            FolderListing::read(&path)
+        })();
+        fs::remove_dir_all(path).unwrap();
+        let listing = result.unwrap();
+        assert_eq!(
+            listing
+                .children
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha", "Zoo"]
+        );
+    }
+}
