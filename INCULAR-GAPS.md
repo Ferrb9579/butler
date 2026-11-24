@@ -80,6 +80,14 @@ When a gap affects Butler, record the Incular revision, platform or renderer if 
 
 **Acceptance:** Open an independently dismissible popover and open its child context menu with the secondary pointer button. One Escape should close only the context menu and leave the parent visible; the next should close the parent. Verify behavior with focus in the child and with other sibling transients. Butler leaves the compact Copy full path menu out until the framework can preserve the parent. No app-level Escape interception or workaround.
 
+### IG-011: Expanded loses the text baseline of a flex child
+
+**Status:** Reproduced in a retained frame on pinned Incular. A horizontal `Row` with `CrossAxisAlignment::Baseline` receives the baseline of an ordinary text child. When the text is wrapped by `Expanded`, the [flex layout pass](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-widgets/src/tree/layout/behavior/containers.rs#L131-L139) consults the wrapper's baseline, but [the Flexible render branch](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-widgets/src/tree/layout/behavior/containers.rs#L154-L162) forwards only the measured size. Flutter's [Flexible](https://api.flutter.dev/flutter/widgets/Flexible-class.html) is a `ParentDataWidget`; its subclass `Expanded` allocates the width without hiding the text render object's baseline from [RenderFlex baseline alignment](https://api.flutter.dev/flutter/rendering/CrossAxisAlignment.html).
+
+**Repro:** In a bounded baseline-aligned row, put a 20 px gutter with a 5 px filled disc at the top of a 7 px-high `Baseline(7)` child, then `Expanded(Text)` using 14 px regular Inter with 22.75 px line height. Use a long item that wraps. Read the disc bounds and first glyph baseline from the retained display list, subtracting the glyph's stored y-up offset as the desktop renderer does. The measured distance from the disc top to the first text baseline was 18 px, not the expected 7 px. The disc stays at the top of the row rather than shifting with the text baseline.
+
+**Butler effect / acceptance:** Butler's attempted baseline-aligned Row with Expanded item text misplaces the list marker when the text wraps. Preserve the child's baseline through `Flexible` and `Expanded`, then verify direct, loose-flex and tight-flex text with single and wrapped lines and mixed font sizes. No app-level y offset or incomplete unordered-list port.
+
 ## Investigations, not confirmed Incular gaps
 
 - Butler's compact scratch button clipped its label before switching from an outer width constraint to `ButtonStyle::fixed_size` ([native capture before the fix](https://github.com/Ferrb9579/butler/actions/runs/45329928604)). Reproduce the same widget constraints, font and padding in Flutter before blaming framework layout.
