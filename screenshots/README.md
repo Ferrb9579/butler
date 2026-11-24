@@ -218,3 +218,9 @@ parity; the sidebar, composer and window chrome still differ.
 - [T3 Code](t3/welcome-agents-aligned-light-1280x800.png) · [Butler](butler/welcome-agents-aligned-light-1280x800.png)
 - Unmodified 1280×800 X11 originals from [run 45455679683](https://github.com/Ferrb9579/butler/actions/runs/45455679683) and [artifact 14949818651](https://github.com/Ferrb9579/butler/actions/runs/45455679683/artifacts/14949818651), T3 Code v0.1.11 `59651c1761f6c63e9b6056839067066968e6a406`, Butler `f16e9a0c4a4fede3ba789a168bd7aa86a658a7b5`.
 - The leading Plus, right chevron and 16×6 ACP Registry mark now have matching drawn bounds. The rules above and below Agents align at y218 and y507. This is geometry evidence, not pixel parity: 42,160 of 1,024,000 raw pixels differ, including seven absent provider logos, other controls and window chrome. No agent was enabled.
+
+## New Project keyboard selection (Butler native)
+
+- [Highlighted Add existing project](butler/new-project-keyboard-selected-light-1280x800.png) · [Sources after Enter](butler/new-project-keyboard-sources-after-light-1280x800.png)
+- Unmodified Linux X11 originals from [run 45462102330](https://github.com/Ferrb9579/butler/actions/runs/45462102330) and [artifact 14954271665](https://github.com/Ferrb9579/butler/actions/runs/45462102330/artifacts/14954271665), Butler `33fef1e10812223916bacfc7bc57ce492f55b172`. These are before/after Butler states, not a T3 comparison pair.
+- Down selected the existing-project result and the footer changed to Enter Select. One plain Enter returned to Sources. The disposable project directory and registration remained absent. Ctrl+Enter was visible but was not sent in this run.
