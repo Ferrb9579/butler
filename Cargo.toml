@@ -6,3 +6,5 @@ rust-version = "1.99"
 
 [dependencies]
 incular = { git = "https://github.com/FabortLabs/incular.git", rev = "71feef92286dfd6f8accd9c17c14f292da746490", default-features = false, features = ["desktop", "controls"] }
+icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
+uuid = { version = "1.29", features = ["v4"] }
