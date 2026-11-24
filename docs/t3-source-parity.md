@@ -79,8 +79,15 @@ controls, and text shaping/rendering comparisons are still unverified.
   path for its tooltip. The pinned header toggle and Mod+Shift+B affect
   only the selected saved thread. Like the pinned `rightPanelStore.ts`,
   Butler stores only explicit inline closures in the local profile and
-  clears them when reopened. Narrow transient popovers, copying the path,
-  and the editor, scripts, and Git rows are not part of this slice.
+  clears them when reopened.
+- At narrow desktop widths, the normal toggle opens a separate transient
+  popover anchored to the whole chat header, following
+  `ThreadDetailsCard.tsx` and `ChatView.tsx`. Narrow opens never change the
+  persisted inline preference. The same pointer group lets Find remain in
+  use while the popover is open. Tests cover outside click, Escape, thread
+  switch, and narrow→wide→narrow. Exact focus-loss dismissal and native
+  narrow geometry remain unverified. Copying the path and the editor,
+  scripts, and Git rows are not implemented.
 
 ### Saved-thread composer, without a provider
 

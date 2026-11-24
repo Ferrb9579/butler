@@ -1,4 +1,4 @@
-//! Read-only desktop inline workspace row from T3 Code v0.1.11.
+//! Read-only desktop thread workspace row and presentation from T3 Code v0.1.11.
 use crate::{
     empty_workspace::MUTED,
     settings_icons::icon,
@@ -7,10 +7,13 @@ use crate::{
 };
 use incular::{
     prelude::*,
-    widgets::{BackdropFilter, RawTooltip, RawTooltipTriggerMode, internal::ExplicitSemantics},
+    widgets::{
+        BackdropFilter, RawTooltip, RawTooltipTriggerMode, TapRegionGroupId,
+        TransientDismissPolicy, internal::ExplicitSemantics,
+    },
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::BTreeMap,
     io,
     path::{Path, PathBuf},
@@ -24,6 +27,8 @@ const CLEARANCE: f32 = 32.0;
 const MINIMUM_CHAT: f32 = 640.0;
 const MINIMUM_HEIGHT: f32 = 160.0;
 const FIND_INSET: f32 = 48.0;
+const POPOVER_VERT_PADDING: f32 = 8.0;
+const POPOVER_WINDOW_RESERVE: f32 = 104.0;
 const GLASS: Color = Color::rgba(255, 255, 255, 213);
 const BORDER: Color = Color::rgba(24, 24, 27, 26);
 pub const TOGGLE: &str = "Toggle thread details panel";
@@ -49,6 +54,47 @@ pub fn inline_layout(width: f32, height: f32, padding: f32, find_open: bool) -> 
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Inline,
+    Popover,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Presentation {
+    thread: Uuid,
+    pub mode: Mode,
+    revision: u64,
+}
+
+pub fn mode_for_canvas(width: f32, height: f32, find_open: bool) -> Mode {
+    let padding = if width >= 720.0 { 48.0 } else { 16.0 };
+    if inline_layout(width, height, padding, find_open).is_some() {
+        Mode::Inline
+    } else {
+        Mode::Popover
+    }
+}
+
+fn popover_box(anchor: Rect, overlay: Size, find_open: bool) -> Option<Rect> {
+    // ThreadDetailsCard.tsx anchors below the entire header. The transparent
+    // panel shell contributes 8px padding inside each edge; the painted
+    // card is capped at 280px and the Find bar reserves another 48px.
+    let width = WIDTH.min(anchor.size.width - EDGE * 2.0);
+    let anchor_bottom = anchor.origin.y + anchor.size.height;
+    let y = anchor_bottom + POPOVER_VERT_PADDING + if find_open { FIND_INSET } else { 0.0 };
+    let height =
+        (overlay.height - POPOVER_WINDOW_RESERVE).min(overlay.height - y - POPOVER_VERT_PADDING);
+    if width <= 0.0 || width > overlay.width || height <= 0.0 {
+        return None;
+    }
+    let x = (anchor.origin.x + anchor.size.width - EDGE - width).clamp(0.0, overlay.width - width);
+    Some(Rect::from_origin_size(
+        Offset::new(x, y),
+        Size::new(width, height),
+    ))
+}
+
 #[derive(Clone)]
 pub struct Visibility {
     // A profile stores only exceptions to the default-open inline state.
@@ -57,6 +103,12 @@ pub struct Visibility {
     profile: Option<PathBuf>,
     hydrated: Rc<RefCell<BTreeMap<Uuid, bool>>>,
     overrides: Signal<BTreeMap<Uuid, bool>>,
+    // A popup belongs to one contiguous presentation, not the thread's
+    // durable inline setting. Rebuilding after resize or navigation expires
+    // the previous token without a reactive write from inside layout.
+    current: Rc<Cell<Option<Presentation>>>,
+    revision: Rc<Cell<u64>>,
+    popover: Signal<Option<Presentation>>,
     details_focus: FocusNode,
     content_focus: FocusNode,
 }
@@ -75,6 +127,9 @@ impl Visibility {
             profile,
             hydrated: Rc::new(RefCell::new(BTreeMap::new())),
             overrides: Signal::new(BTreeMap::new()),
+            current: Rc::new(Cell::new(None)),
+            revision: Rc::new(Cell::new(0)),
+            popover: Signal::new(None),
             details_focus: FocusNode::new(),
             content_focus,
         }
@@ -108,6 +163,52 @@ impl Visibility {
         let mut overrides = self.overrides.get();
         overrides.insert(thread, open);
         self.overrides.set(overrides);
+    }
+
+    pub fn present(&self, selection: Option<(Uuid, Mode)>) -> Option<Presentation> {
+        let current = self.current.get();
+        if current.map(|value| (value.thread, value.mode)) == selection {
+            return current;
+        }
+        let revision = self.revision.get().wrapping_add(1);
+        self.revision.set(revision);
+        let next = selection.map(|(thread, mode)| Presentation {
+            thread,
+            mode,
+            revision,
+        });
+        self.current.set(next);
+        next
+    }
+
+    pub fn popover_open(&self, presentation: Presentation) -> bool {
+        presentation.mode == Mode::Popover
+            && self.current.get() == Some(presentation)
+            && self.popover.get() == Some(presentation)
+    }
+
+    fn toggle_presentation(&self, presentation: Presentation) {
+        if self.current.get() != Some(presentation) {
+            return;
+        }
+        if presentation.mode == Mode::Inline {
+            self.toggle(presentation.thread);
+        } else if self.popover_open(presentation) {
+            self.close_popover(presentation);
+        } else {
+            self.details_focus.request_focus();
+            self.popover.set(Some(presentation));
+        }
+    }
+
+    fn close_popover(&self, presentation: Presentation) {
+        if !self.popover_open(presentation) {
+            return;
+        }
+        if self.details_focus.has_focus() {
+            self.content_focus.request_focus();
+        }
+        self.popover.set(None);
     }
 
     pub fn content(&self, child: impl Into<Widget>) -> Widget {
@@ -253,17 +354,21 @@ pub struct LocalDetails {
     pub machine: String,
     pub path: PathBuf,
     pub visibility: Visibility,
-    pub canvas_height: f32,
+    pub presentation: Presentation,
+    pub popover_open: bool,
     pub inline_open: bool,
 }
 
 impl LocalDetails {
     pub fn toggle(&self) {
-        self.visibility.toggle(self.thread);
+        self.visibility.toggle_presentation(self.presentation);
     }
 
     pub fn toggle_button(&self) -> Widget {
-        let open = self.inline_open;
+        let open = match self.presentation.mode {
+            Mode::Inline => self.inline_open,
+            Mode::Popover => self.popover_open,
+        };
         let next = self.clone();
         let control = Button::with_child(
             TOGGLE,
@@ -281,23 +386,73 @@ impl LocalDetails {
                 }),
         )
         .on_click(move || next.toggle());
-        RawTooltip::new(
-            "Toggle thread details",
-            Widget::from(control).semantics(
-                ExplicitSemantics::new(SemanticRole::Button)
-                    .label(TOGGLE)
-                    .state(SemanticState {
-                        toggled: Some(open),
-                        ..SemanticState::default()
-                    }),
-            ),
-        )
-        .trigger_mode(RawTooltipTriggerMode::Manual)
-        .enable_tap_to_dismiss(false)
-        .into()
+        let button = Widget::from(
+            RawTooltip::new(
+                "Toggle thread details",
+                Widget::from(control).semantics(
+                    ExplicitSemantics::new(SemanticRole::Button)
+                        .label(TOGGLE)
+                        .state(SemanticState {
+                            toggled: Some(open),
+                            ..SemanticState::default()
+                        }),
+                ),
+            )
+            .trigger_mode(RawTooltipTriggerMode::Manual)
+            .enable_tap_to_dismiss(false),
+        );
+        self.popover_region(button)
+    }
+
+    fn group(&self) -> TapRegionGroupId {
+        TapRegionGroupId::named(format!("butler-thread-details-{}", self.thread))
+    }
+
+    pub fn popover_region(&self, child: Widget) -> Widget {
+        if self.presentation.mode == Mode::Popover {
+            TapRegion::new(child).group_id(self.group()).into()
+        } else {
+            child
+        }
+    }
+
+    pub fn header(&self, header: Widget, find_open: bool) -> Widget {
+        let detail = self.clone();
+        let dismiss = self.visibility.clone();
+        let presentation = self.presentation;
+        OverlayPortal::new(header)
+            .role(TransientRole::Popover)
+            .show(self.popover_open)
+            .dismiss_policy(TransientDismissPolicy {
+                outside_pointer: false, // handled by the shared Find/trigger/card group
+                escape: true,
+                focus_loss: false, // generic FocusLost cannot exempt the sibling Find bar
+                parent_deactivation: true,
+            })
+            .on_dismiss(move |_| dismiss.close_popover(presentation))
+            .overlay_child_layout_builder(move |_, layout| {
+                let Some(bounds) = popover_box(layout.anchor_rect, layout.overlay_size, find_open)
+                else {
+                    return SizedBox::shrink().into();
+                };
+                let close = detail.visibility.clone();
+                let row = TapRegion::new(detail.card_with_height(bounds.size.height, true))
+                    .group_id(detail.group())
+                    .on_tap_outside(move |_| close.close_popover(presentation));
+                Stack::new([Positioned::new(row)
+                    .left(bounds.origin.x)
+                    .top(bounds.origin.y)
+                    .width(bounds.size.width)])
+                .into()
+            })
+            .into()
     }
 
     pub fn card(&self) -> Widget {
+        self.card_with_height(f32::INFINITY, false)
+    }
+
+    fn card_with_height(&self, max_height: f32, dialog: bool) -> Widget {
         let path = self.path.to_string_lossy().into_owned();
         let row_text = Widget::from(
             Text::new(&self.machine)
@@ -334,6 +489,7 @@ impl LocalDetails {
         );
         let body = Container::new()
             .width(WIDTH)
+            .constraints(Constraints::new(0.0, WIDTH, 0.0, max_height))
             .padding(EdgeInsets::from_ltrb(8.0, 8.0, 8.0, 10.0))
             .decoration(
                 BoxDecoration::new()
@@ -341,10 +497,19 @@ impl LocalDetails {
                     .border(Border::new(1.0, BORDER))
                     .border_radius(BorderRadius::circular(16.0)),
             )
-            .child(row);
+            .child(if dialog && max_height < 52.0 {
+                Widget::from(SingleChildScrollView::new(row))
+            } else {
+                row
+            });
         Focus::new(
             Widget::from(ClipRRect::new(16.0, BackdropFilter::blur(12.0, body))).semantics(
-                ExplicitSemantics::new(SemanticRole::GenericContainer).label("Thread details"),
+                ExplicitSemantics::new(if dialog {
+                    SemanticRole::Dialog
+                } else {
+                    SemanticRole::GenericContainer
+                })
+                .label("Thread details"),
             ),
         )
         .node(self.visibility.details_focus.clone())
@@ -384,6 +549,47 @@ mod tests {
         visibility.toggle(first);
         assert!(visibility.is_open(first));
     }
+    #[test]
+    fn popup_geometry_uses_full_header_and_does_not_inherit_inline_gap() {
+        let overlay = Size::new(1000.0, 800.0);
+        let header = Rect::from_origin_size(Offset::new(256.0, 0.0), Size::new(744.0, 40.0));
+        let gap = popover_box(header, overlay, false).unwrap();
+        assert_eq!(gap.origin, Offset::new(708.0, 48.0));
+        assert_eq!(gap.size.width, 280.0);
+        let with_find = popover_box(header, overlay, true).unwrap();
+        assert_eq!(with_find.origin, Offset::new(708.0, 96.0));
+        assert_eq!(with_find.size.width, 280.0);
+        assert!(popover_box(header, Size::new(1000.0, 100.0), false).is_none());
+    }
+
+    #[test]
+    fn popover_never_changes_persisted_inline_and_expires_when_its_view_changes() {
+        let profile = ProfileFixture::new();
+        let visibility = profile.visibility();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        visibility.toggle(first);
+        let popup = visibility.present(Some((first, Mode::Popover))).unwrap();
+        assert!(!visibility.popover_open(popup));
+        visibility.toggle_presentation(popup);
+        assert!(visibility.popover_open(popup));
+        assert!(!profile.visibility().is_open(first));
+
+        let inline = visibility.present(Some((first, Mode::Inline))).unwrap();
+        assert!(!visibility.popover_open(inline));
+        let narrow_again = visibility.present(Some((first, Mode::Popover))).unwrap();
+        assert!(!visibility.popover_open(narrow_again));
+        visibility.toggle_presentation(popup); // stale widget callback
+        assert!(!visibility.popover_open(narrow_again));
+        visibility.toggle_presentation(narrow_again);
+        assert!(visibility.popover_open(narrow_again));
+
+        let another = visibility.present(Some((second, Mode::Popover))).unwrap();
+        assert!(!visibility.popover_open(another));
+        assert!(profile.visibility().is_open(second));
+        assert_eq!(std::fs::read_dir(&profile.0).unwrap().count(), 1);
+    }
+
     struct ProfileFixture(PathBuf);
 
     impl ProfileFixture {

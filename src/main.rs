@@ -230,32 +230,37 @@ fn application_with_transport(
                         .clone()
                 });
                 let viewport = cx.viewport();
-                let details = current.as_ref().and_then(|turn| {
-                    let Workspace::Local(path) = &turn.workspace else {
-                        return None;
-                    };
-                    Some(thread_details::LocalDetails {
-                        thread: turn.id,
-                        machine: device.clone(),
-                        path: path.clone(),
-                        canvas_height: (viewport.height - 40.0).max(0.0),
-                        inline_open: details_visibility.is_open(turn.id),
-                        visibility: details_visibility.clone(),
-                    })
-                });
-                let shortcut_details = details.clone().filter(|detail| {
-                    let width = viewport.width - 256.0;
-                    thread_details::inline_layout(
-                        width,
-                        detail.canvas_height,
-                        48.0,
-                        message_jump.get().is_some(),
-                    )
-                    .is_some()
-                });
                 let jump = message_jump
                     .get()
                     .filter(|jump| current.as_ref().is_some_and(|turn| turn.id == jump.thread));
+                let local_thread = current.as_ref().and_then(|turn| {
+                    let Workspace::Local(path) = &turn.workspace else {
+                        return None;
+                    };
+                    Some((turn.id, path))
+                });
+                let details_mode = thread_details::mode_for_canvas(
+                    viewport.width - workspace::SIDEBAR_AND_RULE_WIDTH,
+                    (viewport.height - workspace::HEADER_HEIGHT).max(0.0),
+                    jump.is_some(),
+                );
+                let presentation = details_visibility
+                    .present(local_thread.map(|(thread, _)| (thread, details_mode)));
+                let details =
+                    local_thread
+                        .zip(presentation)
+                        .map(
+                            |((thread, path), presentation)| thread_details::LocalDetails {
+                                thread,
+                                machine: device.clone(),
+                                path: path.clone(),
+                                presentation,
+                                inline_open: details_visibility.is_open(thread),
+                                popover_open: details_visibility.popover_open(presentation),
+                                visibility: details_visibility.clone(),
+                            },
+                        );
+                let shortcut_details = details.clone();
                 if let Some(jump) = &jump {
                     jump.reveal(cx, &posted_message_jump);
                 }
@@ -487,6 +492,7 @@ fn application_with_transport(
                     workspace
                 }
             } else {
+                details_visibility.present(None);
                 match resolve_landing(&[], true, profile.is_some()) {
                     Landing::Empty {
                         can_start_without_project,
@@ -1864,6 +1870,148 @@ mod ui_tests {
         assert_eq!(store.load(first.id).unwrap(), Some(first));
         assert_eq!(store.load(second.id).unwrap(), Some(second));
         assert_eq!(fs::read_dir(&folder).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn narrow_thread_details_popover_closes_on_resize_and_keeps_find() {
+        use incular::{
+            platform::{PhysicalSize, PlatformEvent, WindowMetrics},
+            rendering::PaintCommand,
+        };
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        let folder = tmp.0.join("Project in use");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("untouched.txt"), b"keep me").unwrap();
+        let project = LocalProjects::new(&profile).open(&folder).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let store = ThreadStore::new(&profile);
+        for prompt in ["Alpha needle", "Beta needle"] {
+            store
+                .save(&Conversation {
+                    id: uuid::Uuid::new_v4(),
+                    workspace: Workspace::Local(project.root.clone()),
+                    prompt: prompt.into(),
+                    reply: "The second needle".into(),
+                    follow_ups: Vec::new(),
+                })
+                .unwrap();
+        }
+        let mut app = application(
+            Some(profile.clone()),
+            Some(tmp.0.clone()),
+            "Local fixture".into(),
+        )
+        .unwrap();
+        let window = app.active_window_ids()[0];
+        let geometry = |app: &mut Application, width: f32| {
+            let size = Constraints::tight(Size::new(width, 800.0));
+            // Give the ordinary overlay-layout publication its next frame.
+            let mut answer = None;
+            for _ in 0..3 {
+                app.process_runtime_work();
+                let (list, _) = app
+                    .run_window_frame_at(window, size, std::time::Instant::now())
+                    .unwrap()
+                    .unwrap();
+                let mut transforms = vec![AffineTransform::IDENTITY];
+                answer = None;
+                for command in list.commands() {
+                    match command {
+                        PaintCommand::PushTransform { transform } => {
+                            transforms.push(transform.then(*transforms.last().unwrap()));
+                        }
+                        PaintCommand::PopTransform => {
+                            transforms.pop();
+                        }
+                        PaintCommand::RRect {
+                            rrect,
+                            brush: Brush::Solid(color),
+                        } if *color == Color::rgba(255, 255, 255, 213)
+                            && rrect.rect.size.width == 280.0
+                            && rrect.rect.size.height >= 50.0 =>
+                        {
+                            answer = Some(
+                                transforms
+                                    .last()
+                                    .unwrap()
+                                    .transform_point(rrect.rect.origin),
+                            );
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            answer
+        };
+        let resize = |app: &mut Application, width: u32| {
+            app.handle_window_event(WindowEvent::platform(
+                window,
+                PlatformEvent::Metrics(WindowMetrics::new(PhysicalSize::new(width, 800), 1.0)),
+            ));
+            geometry(app, width as f32)
+        };
+        assert_eq!(resize(&mut app, 1000), None);
+        interact(&mut app, |sim| {
+            sim.click("Open thread: Alpha needle").unwrap()
+        });
+        assert_eq!(geometry(&mut app, 1000.0), None);
+        interact(&mut app, |sim| sim.click(thread_details::TOGGLE).unwrap());
+        assert_eq!(geometry(&mut app, 1000.0), Some(Offset::new(708.0, 48.0)));
+        assert_eq!(resize(&mut app, 1280), Some(Offset::new(988.0, 52.0)));
+        assert_eq!(resize(&mut app, 1000), None);
+
+        interact(&mut app, |sim| {
+            sim.click("Thread actions for Alpha needle").unwrap();
+            sim.click("Find in thread").unwrap();
+            sim.focus(thread_details::TOGGLE).unwrap();
+            let modifier = if cfg!(target_os = "macos") {
+                Code::MetaLeft
+            } else {
+                Code::ControlLeft
+            };
+            sim.key_down(modifier).unwrap();
+            sim.key_down(Code::ShiftLeft).unwrap();
+            sim.press_key(KeyboardKey::Character("B".into()), Code::KeyB)
+                .unwrap();
+            sim.key_up(Code::ShiftLeft).unwrap();
+            sim.key_up(modifier).unwrap();
+            sim.click("Find in thread").unwrap();
+            sim.type_text("needle").unwrap();
+            sim.focus("1/2").unwrap();
+        });
+        assert_eq!(geometry(&mut app, 1000.0), Some(Offset::new(708.0, 96.0)));
+        interact(&mut app, |sim| {
+            sim.click_at(Offset::new(401.0, 320.0)).unwrap();
+            sim.focus("Find in thread").unwrap();
+        });
+        assert_eq!(geometry(&mut app, 1000.0), None);
+        interact(&mut app, |sim| {
+            sim.click(thread_details::TOGGLE).unwrap();
+            sim.click("Close thread find").unwrap();
+        });
+        assert_eq!(geometry(&mut app, 1000.0), Some(Offset::new(708.0, 48.0)));
+        interact(&mut app, |sim| {
+            sim.focus(thread_details::TOGGLE).unwrap();
+            sim.press(Code::Escape).unwrap();
+        });
+        assert_eq!(geometry(&mut app, 1000.0), None);
+        interact(&mut app, |sim| {
+            sim.click(thread_details::TOGGLE).unwrap();
+            sim.click("Open thread: Beta needle").unwrap();
+            sim.focus("Thread actions for Beta needle").unwrap();
+        });
+        assert_eq!(geometry(&mut app, 1000.0), None);
+        assert!(!fs::read_dir(&profile).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("thread-details-inline-closed-")
+        }));
+        assert_eq!(fs::read(folder.join("untouched.txt")).unwrap(), b"keep me");
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 1);
     }
 
     #[test]

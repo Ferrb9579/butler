@@ -12,6 +12,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, icon_label, label, sidebar, space};
 
+pub const SIDEBAR_AND_RULE_WIDTH: f32 = 256.0;
+pub const HEADER_HEIGHT: f32 = 40.0;
+
 pub fn draft(
     project: Option<String>,
     project_icon: Option<incular::image::ImageHandle>,
@@ -236,65 +239,67 @@ pub fn draft(
             threads,
         )
     });
-    Row::new(vec![
+    let header = Container::new()
+        .height(HEADER_HEIGHT)
+        .padding(EdgeInsets::from_ltrb(20.0, 0.0, 12.0, 0.0))
+        .alignment(Alignment::CENTER_LEFT)
+        .child(LayoutBuilder::new(move |_, constraints| {
+            // Leave room for both gaps, a 40px title, and the optional toggle.
+            let reserved = if details_header.is_some() {
+                112.0
+            } else {
+                72.0
+            };
+            let maximum = (constraints.max_width() - reserved).max(0.0);
+            let width = (20.0 + word_advance(&project_title)).min(maximum);
+            let action = start_here.clone();
+            let mut parts = vec![
+                workspace_project(
+                    &project_title,
+                    header_icon.as_ref(),
+                    has_project,
+                    width,
+                    move || action(),
+                ),
+                breadcrumb_text("/", MUTED),
+                Expanded::new(active_header.clone()).into(),
+            ];
+            if let Some(detail) = &details_header {
+                parts.push(detail.toggle_button());
+            }
+            Row::new(parts)
+                .spacing(12.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into()
+        }));
+    let header = match &details {
+        Some(detail) => detail.header(header.into(), find_open),
+        None => header.into(),
+    };
+    let workspace = Row::new(vec![
         sidebar,
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
                 Column::new(vec![
-                    Widget::from(
-                        Container::new()
-                            .height(40.0)
-                            .padding(EdgeInsets::from_ltrb(20.0, 0.0, 12.0, 0.0))
-                            .alignment(Alignment::CENTER_LEFT)
-                            .child(LayoutBuilder::new(move |_, constraints| {
-                                let details = details_header.as_ref().filter(|detail| {
-                                    crate::thread_details::inline_layout(
-                                        constraints.max_width() + 32.0,
-                                        detail.canvas_height,
-                                        48.0,
-                                        find_open,
-                                    )
-                                    .is_some()
-                                });
-                                // Leave room for the divider, both gaps, and the
-                                // 40px minimum of the current-thread breadcrumb.
-                                let reserved = if details.is_some() { 112.0 } else { 72.0 };
-                                let maximum = (constraints.max_width() - reserved).max(0.0);
-                                let width = (20.0 + word_advance(&project_title)).min(maximum);
-                                let action = start_here.clone();
-                                let mut parts = vec![
-                                    workspace_project(
-                                        &project_title,
-                                        header_icon.as_ref(),
-                                        has_project,
-                                        width,
-                                        move || action(),
-                                    ),
-                                    breadcrumb_text("/", MUTED),
-                                    Expanded::new(active_header.clone()).into(),
-                                ];
-                                if let Some(detail) = details {
-                                    parts.push(detail.toggle_button());
-                                }
-                                Row::new(parts)
-                                    .spacing(12.0)
-                                    .cross_axis_alignment(CrossAxisAlignment::Center)
-                                    .into()
-                            })),
-                    ),
+                    header,
                     Expanded::new(LayoutBuilder::new(move |_, constraints| {
                         let width = constraints.max_width();
                         let height = constraints.max_height();
                         let margin = if width >= 720.0 { 48.0 } else { 16.0 };
                         let composer_width = (width - 2.0 * margin).clamp(1.0, 652.0);
                         if let Some(turn) = selected.as_ref() {
-                            let details_layout = details.as_ref().and_then(|detail| {
-                                crate::thread_details::inline_layout(
-                                    width, height, margin, find_open,
-                                )
-                                .map(|placement| (detail, placement))
-                            });
+                            let details_layout = details
+                                .as_ref()
+                                .filter(|detail| {
+                                    detail.presentation.mode == crate::thread_details::Mode::Inline
+                                })
+                                .and_then(|detail| {
+                                    crate::thread_details::inline_layout(
+                                        width, height, margin, find_open,
+                                    )
+                                    .map(|placement| (detail, placement))
+                                });
                             let (left, composer_width) =
                                 if let Some((detail, placement)) = details_layout {
                                     let right = if detail.inline_open {
@@ -364,17 +369,18 @@ pub fn draft(
                                 );
                             }
                             if let Some(jump) = &jump {
-                                layers.push(
-                                    Positioned::new(find_bar(
-                                        turn,
-                                        jump,
-                                        jump_state.clone(),
-                                        find_input.clone(),
-                                        find_width,
-                                    ))
-                                    .top(12.0)
-                                    .right(12.0),
+                                let bar = find_bar(
+                                    turn,
+                                    jump,
+                                    jump_state.clone(),
+                                    find_input.clone(),
+                                    find_width,
                                 );
+                                let bar = match &details {
+                                    Some(detail) => detail.popover_region(bar),
+                                    None => bar,
+                                };
+                                layers.push(Positioned::new(bar).top(12.0).right(12.0));
                             }
                             return Stack::new(layers).into();
                         }
@@ -405,8 +411,8 @@ pub fn draft(
         )
         .into(),
     ])
-    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-    .into()
+    .cross_axis_alignment(CrossAxisAlignment::Stretch);
+    incular::widgets::TapRegionSurface::new(workspace).into()
 }
 
 fn breadcrumb_style(color: Color) -> TextStyle {
