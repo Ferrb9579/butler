@@ -88,6 +88,8 @@ fn application_with_transport(
     let provider_names = provider_settings::Names::new(profile.clone());
     let history_store = state.as_ref().map(ThreadStore::new);
     let details_profile = state.clone();
+    let details_clipboard = thread_details::ClipboardWriter::default();
+    let clipboard_for_rows = details_clipboard.clone();
     let unsent_saved_drafts = composer_drafts::Drafts::new(state.clone());
     let projects = state.map(LocalProjects::new);
     let saved_project = projects.as_ref().map(LocalProjects::list).transpose();
@@ -254,6 +256,7 @@ fn application_with_transport(
                                 inline_open: details_visibility.is_open(thread),
                                 popover_open: details_visibility.popover_open(presentation),
                                 visibility: details_visibility.clone(),
+                                clipboard: clipboard_for_rows.clone(),
                             },
                         );
                 let shortcut_details = details.clone();
@@ -721,6 +724,7 @@ fn application_with_transport(
         };
         Directionality::new(TextDirection::Ltr, root).into()
     })?;
+    app.dispatch(move |runtime| details_clipboard.bind(runtime.dispatcher()));
     Ok(app)
 }
 
@@ -1911,6 +1915,144 @@ mod ui_tests {
         assert_eq!(store.load(first.id).unwrap(), Some(first));
         assert_eq!(store.load(second.id).unwrap(), Some(second));
         assert_eq!(fs::read_dir(&folder).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn saved_local_context_menu_only_copies_on_explicit_action() {
+        use incular::{
+            core::{
+                InputEvent, PointerDeviceKind, PointerPhase, PointerSampleMetadata,
+                SECONDARY_POINTER_BUTTON,
+            },
+            platform::{PhysicalSize, PlatformEvent, WindowMetrics},
+        };
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        let folder = tmp.0.join("Project • in use");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("untouched.txt"), b"keep me").unwrap();
+        let project = LocalProjects::new(&profile).open(&folder).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let store = ThreadStore::new(&profile);
+        let thread = Conversation {
+            id: uuid::Uuid::new_v4(),
+            workspace: Workspace::Local(project.root.clone()),
+            prompt: "A needle".into(),
+            reply: "The second needle".into(),
+            follow_ups: Vec::new(),
+        };
+        store.save(&thread).unwrap();
+        let mut app =
+            application(Some(profile), Some(tmp.0.clone()), "Local fixture".into()).unwrap();
+        let window = app.active_window_ids()[0];
+        let clipboard = |app: &mut Application| {
+            use incular::platform::{TransferFormat, TransferReadRequest};
+            let (sender, receiver) = std::sync::mpsc::channel();
+            app.dispatch(move |runtime| {
+                let transfer = runtime
+                    .read_clipboard(TransferReadRequest::format(TransferFormat::PlainText))
+                    .unwrap();
+                sender
+                    .send(transfer.plain_text_value().unwrap().unwrap().to_string())
+                    .unwrap();
+            });
+            app.process_runtime_work();
+            receiver.try_recv().unwrap()
+        };
+        app.dispatch(|runtime| runtime.set_clipboard_text("existing clipboard"));
+        assert_eq!(clipboard(&mut app), "existing clipboard");
+        let frames = |app: &mut Application, width: f32| {
+            for _ in 0..3 {
+                app.process_runtime_work();
+                app.run_window_frame_at(
+                    window,
+                    Constraints::tight(Size::new(width, 800.0)),
+                    std::time::Instant::now(),
+                )
+                .unwrap()
+                .unwrap();
+            }
+        };
+        let secondary_click = |app: &mut Application, position, width| {
+            for phase in [PointerPhase::Down, PointerPhase::Up] {
+                app.handle_window_event(WindowEvent::platform(
+                    window,
+                    PlatformEvent::Input(InputEvent::PointerWithMetadata {
+                        pointer: 0,
+                        device: 1,
+                        kind: PointerDeviceKind::Mouse,
+                        buttons: if phase == PointerPhase::Down {
+                            SECONDARY_POINTER_BUTTON
+                        } else {
+                            0
+                        },
+                        button: Some(SECONDARY_POINTER_BUTTON),
+                        sample: PointerSampleMetadata::default(),
+                        phase,
+                        position,
+                    }),
+                ));
+            }
+            frames(app, width);
+        };
+        interact(&mut app, |sim| sim.click("Open thread: A needle").unwrap());
+        frames(&mut app, 1280.0);
+        interact(&mut app, |sim| {
+            sim.click_at(Offset::new(1060.0, 75.0)).unwrap()
+        });
+        assert_eq!(clipboard(&mut app), "existing clipboard");
+        secondary_click(&mut app, Offset::new(1060.0, 75.0), 1280.0);
+        let transient_roles = |app: &Application| {
+            app.transient_surfaces(window)
+                .into_iter()
+                .map(|s| s.role)
+                .collect::<Vec<_>>()
+        };
+        assert!(transient_roles(&app).contains(&TransientRole::Menu));
+        interact(&mut app, |sim| sim.press(Code::Escape).unwrap());
+        frames(&mut app, 1280.0);
+        assert!(!transient_roles(&app).contains(&TransientRole::Menu));
+        assert_eq!(clipboard(&mut app), "existing clipboard");
+        secondary_click(&mut app, Offset::new(1060.0, 75.0), 1280.0);
+        interact(&mut app, |sim| {
+            sim.click_at(Offset::new(401.0, 320.0)).unwrap()
+        });
+        frames(&mut app, 1280.0);
+        assert!(!transient_roles(&app).contains(&TransientRole::Menu));
+        assert_eq!(clipboard(&mut app), "existing clipboard");
+        secondary_click(&mut app, Offset::new(1060.0, 75.0), 1280.0);
+        assert_eq!(clipboard(&mut app), "existing clipboard");
+        interact(&mut app, |sim| sim.click("Copy full path").unwrap());
+        assert_eq!(clipboard(&mut app), project.root.to_str().unwrap());
+
+        app.dispatch(|runtime| runtime.set_clipboard_text("another clipboard"));
+        app.handle_window_event(WindowEvent::platform(
+            window,
+            PlatformEvent::Metrics(WindowMetrics::new(PhysicalSize::new(1000, 800), 1.0)),
+        ));
+        frames(&mut app, 1000.0);
+        interact(&mut app, |sim| {
+            sim.click("Thread actions for A needle").unwrap();
+            sim.click("Find in thread").unwrap();
+            sim.click(thread_details::TOGGLE).unwrap();
+            sim.click("Find in thread").unwrap();
+            sim.type_text("needle").unwrap();
+            sim.focus("1/2").unwrap();
+        });
+        frames(&mut app, 1000.0);
+        secondary_click(&mut app, Offset::new(780.0, 120.0), 1000.0);
+        assert_eq!(transient_roles(&app), vec![TransientRole::Popover]);
+        assert_eq!(clipboard(&mut app), "another clipboard");
+        interact(&mut app, |sim| {
+            sim.focus("1/2").unwrap();
+            sim.press(Code::Escape).unwrap();
+        });
+        frames(&mut app, 1000.0);
+        assert!(transient_roles(&app).is_empty());
+        interact(&mut app, |sim| sim.focus("1/2").unwrap());
+        assert_eq!(fs::read(folder.join("untouched.txt")).unwrap(), b"keep me");
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 1);
+        assert_eq!(store.load(thread.id).unwrap(), Some(thread));
     }
 
     #[test]

@@ -85,10 +85,14 @@ controls, and text shaping/rendering comparisons are still unverified.
   `ThreadDetailsCard.tsx` and `ChatView.tsx`. Narrow opens never change the
   persisted inline preference. The same pointer group lets Find remain in
   use while the popover is open. Tests cover outside click, Escape, thread
-  switch, and narrow→wide→narrow. Exact focus-loss dismissal and native
-  narrow geometry remain unverified. The optional native compact fixture
-  checks closed, open, and Escape-dismissed at 1000×800. Copying the path and the editor,
-  scripts, and Git rows are not implemented.
+  switch, and narrow→wide→narrow. Exact keyboard focus-loss dismissal
+  remains unverified. The optional native
+  compact fixture passed closed, open, and Escape-dismissed at 1000×800.
+  The editor, scripts, and Git rows are not implemented.
+- Right-clicking the workspace row in the wide inline card opens T3's
+  `BranchToolbar.tsx` Copy full path action. The application writes the exact
+  canonical path only on selection. Compact details omits the nested menu
+  because of IG-010.
 
 ### Saved-thread composer, without a provider
 

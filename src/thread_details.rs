@@ -1,4 +1,4 @@
-//! Read-only desktop thread workspace row and presentation from T3 Code v0.1.11.
+//! Desktop thread workspace row and presentation from T3 Code v0.1.11.
 use crate::{
     empty_workspace::MUTED,
     settings_icons::icon,
@@ -6,10 +6,12 @@ use crate::{
     ui::{Button, ButtonStyle, ButtonVariant},
 };
 use incular::{
+    core::SECONDARY_POINTER_BUTTON,
     prelude::*,
     widgets::{
-        BackdropFilter, RawTooltip, RawTooltipTriggerMode, TapRegionGroupId,
-        TransientDismissPolicy, internal::ExplicitSemantics,
+        BackdropFilter, HitTestBehavior, Listener, MenuController, RawMenuAnchor, RawTooltip,
+        RawTooltipTriggerMode, TapRegionGroupId, TransientDismissPolicy,
+        internal::ExplicitSemantics,
     },
 };
 use std::{
@@ -18,6 +20,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::{Arc, OnceLock},
 };
 use uuid::Uuid;
 
@@ -32,6 +35,32 @@ const POPOVER_WINDOW_RESERVE: f32 = 104.0;
 const GLASS: Color = Color::rgba(255, 255, 255, 213);
 const BORDER: Color = Color::rgba(24, 24, 27, 26);
 pub const TOGGLE: &str = "Toggle thread details panel";
+const COPY_PATH: &str = "Copy full path";
+
+/// Connects row actions to their owning App window's real clipboard. No system
+/// clipboard is opened or written while building the layout.
+#[derive(Clone, Default)]
+pub struct ClipboardWriter(Arc<OnceLock<UiDispatcher>>);
+
+impl ClipboardWriter {
+    pub fn bind(&self, dispatcher: UiDispatcher) {
+        let _ = self.0.set(dispatcher);
+    }
+
+    fn write(&self, text: String) {
+        let Some(dispatcher) = self.0.get() else {
+            return;
+        };
+        dispatcher.dispatch(move |runtime| {
+            if !runtime
+                .write_clipboard(DataTransfer::plain_text(text))
+                .is_ok_and(|report| report.written.contains(&TransferFormat::PlainText))
+            {
+                eprintln!("Butler could not copy the workspace path to the clipboard.");
+            }
+        });
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Layout {
@@ -357,6 +386,7 @@ pub struct LocalDetails {
     pub presentation: Presentation,
     pub popover_open: bool,
     pub inline_open: bool,
+    pub clipboard: ClipboardWriter,
 }
 
 impl LocalDetails {
@@ -452,6 +482,76 @@ impl LocalDetails {
         self.card_with_height(f32::INFINITY, false)
     }
 
+    fn workspace_path_menu(&self, row: Widget, path: String) -> Widget {
+        let menu = MenuController::new();
+        let close = menu.clone();
+        let clipboard = self.clipboard.clone();
+        let popup = RawMenuAnchor::new(menu, move |_, layout| {
+            let margin = 4.0;
+            let width = 144.0;
+            let height = 36.0;
+            let position = layout.position.unwrap_or(Offset::ZERO);
+            let x = (layout.anchor_rect.origin.x + position.x).clamp(
+                margin,
+                (layout.overlay_size.width - width - margin).max(margin),
+            );
+            let y = (layout.anchor_rect.origin.y + position.y).clamp(
+                margin,
+                (layout.overlay_size.height - height - margin).max(margin),
+            );
+            let click = close.clone();
+            let clipboard = clipboard.clone();
+            let path = path.clone();
+            let row = Button::new(COPY_PATH)
+                .style(
+                    ButtonStyle::new()
+                        .variant(ButtonVariant::Ghost)
+                        .fixed_size(Size::new(width - margin * 2.0, 28.0))
+                        .alignment(Alignment::CENTER_LEFT)
+                        .padding(EdgeInsets::symmetric(8.0, 0.0))
+                        .border_radius(4.0)
+                        .text_style(
+                            typography::interface()
+                                .font_size(14.0)
+                                .line_height_absolute(20.0),
+                        ),
+                )
+                .on_click(move || {
+                    click.close();
+                    clipboard.write(path.clone());
+                });
+            let panel = Container::new()
+                .height(height)
+                .width(width)
+                .padding(EdgeInsets::all(margin))
+                .decoration(
+                    BoxDecoration::new()
+                        .color(GLASS)
+                        .border(Border::new(1.0, BORDER))
+                        .border_radius(BorderRadius::circular(8.0)),
+                )
+                .child(row);
+            let dismiss = close.clone();
+            let panel = TapRegion::new(panel)
+                .group_id(layout.tap_region_group_id.clone())
+                .on_tap_outside(move |_| dismiss.close());
+            Stack::new([Positioned::new(panel).left(x).top(y).width(width)]).into()
+        })
+        .child(row)
+        .builder(|_, menu, row| {
+            let open = menu.clone();
+            Listener::new(row.expect("workspace row"))
+                .behavior(HitTestBehavior::Opaque)
+                .on_pointer_down(move |press| {
+                    if press.button == Some(SECONDARY_POINTER_BUTTON) {
+                        open.open(Some(press.local_position));
+                    }
+                })
+                .into()
+        });
+        Widget::from(popup).with_key(self.presentation.revision)
+    }
+
     fn card_with_height(&self, max_height: f32, dialog: bool) -> Widget {
         let path = self.path.to_string_lossy().into_owned();
         let row_text = Widget::from(
@@ -487,6 +587,14 @@ impl LocalDetails {
                     ..SemanticState::default()
                 }),
         );
+        // The pinned runtime dismisses every Escape-enabled portal together;
+        // don't mount a nested menu that would close compact details too.
+        // A non-UTF-8 path also has no exact plain-text encoding.
+        let row = if !dialog && let Some(path) = self.path.to_str() {
+            self.workspace_path_menu(row, path.to_owned())
+        } else {
+            row
+        };
         let body = Container::new()
             .width(WIDTH)
             .constraints(Constraints::new(0.0, WIDTH, 0.0, max_height))

@@ -72,6 +72,14 @@ When a gap affects Butler, record the Incular revision, platform or renderer if 
 
 **Butler effect / acceptance:** T3 ignores modified double-clicks when entering Rename. Expose current hardware modifier state to widgets without requiring focus or keyboard bubbling, then verify that Ctrl, Shift, Alt and Meta can be distinguished from ordinary double-clicks, with correct clearing after release or window focus changes. Butler does not add a local key tracker or enable a rename gesture that would also fire on modified clicks.
 
+### IG-010: Escape dismisses more than the top transient layer
+
+**Status:** Reproduced in the pinned Incular runtime with a separate workspace context menu above the compact thread details popover. Both are visible and independently Escape-dismissible. A single Escape removed both. The [keyboard dismissal traversal](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-widgets/src/tree/retained.rs#L382-L403) collects and calls every matching transient, unlike the [pointer traversal](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-widgets/src/tree/retained.rs#L406-L444), which tracks a protected chain.
+
+**Flutter comparison:** Flutter's stock route stack can scope Escape to the current dismissible layer: [DismissIntent](https://api.flutter.dev/flutter/widgets/DismissIntent-class.html) is bound to Escape, and [barrier-dismissible routes](https://api.flutter.dev/flutter/widgets/PageRouteBuilder/barrierDismissible.html) dismiss the current route; [Navigator](https://api.flutter.dev/flutter/widgets/Navigator-class.html) pops the top route. This is not a claim that Flutter's cascading MenuBar, controlled as one menu system, dismisses just one submenu.
+
+**Acceptance:** Open an independently dismissible popover and open its child context menu with the secondary pointer button. One Escape should close only the context menu and leave the parent visible; the next should close the parent. Verify behavior with focus in the child and with other sibling transients. Butler leaves the compact Copy full path menu out until the framework can preserve the parent. No app-level Escape interception or workaround.
+
 ## Investigations, not confirmed Incular gaps
 
 - Butler's compact scratch button clipped its label before switching from an outer width constraint to `ButtonStyle::fixed_size` ([native capture before the fix](https://github.com/Ferrb9579/butler/actions/runs/45329928604)). Reproduce the same widget constraints, font and padding in Flutter before blaming framework layout.
