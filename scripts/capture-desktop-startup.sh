@@ -822,15 +822,19 @@ thread_find_row_crop() {
 }
 
 thread_find_transcript() {
-  # The native Butler transcript starts 16 px below its 40 px header.
-  # Keep that first line, while excluding the header/sidebar title.
-  local file=$1 crop='940x718+281+43'
-  settings_phrase "$file" "$crop" 'Does the release open' 11 >/dev/null &&
-    settings_phrase "$file" "$crop" 'The release opens and shows this thread' 11 >/dev/null
+  local app=$1 file=$2 crop='940x718+281+43' psm=11
+  if [[ "$app" == butler ]]; then
+    # Original 45393540028 transcript/open/match frames place these two
+    # lines here. Sparse OCR over the full pane failed once Find appeared.
+    crop='425x58+291+45'
+    psm=6
+  fi
+  settings_phrase "$file" "$crop" 'Does the release open' "$psm" >/dev/null &&
+    settings_phrase "$file" "$crop" 'The release opens and shows this thread' "$psm" >/dev/null
 }
 
 await_thread_find_count() {
-  local window=$1 file=$2 query=$3 count=$4 anchor_y=$5 tick coords unused y
+  local app=$1 window=$2 file=$3 query=$4 count=$5 anchor_y=$6 tick coords unused y
   local input="135x29+995+$((anchor_y - 14))"
   for ((tick=0; tick<15; tick++)); do
     "${capture[@]}" -window "$window" "$file" || return 1
@@ -840,7 +844,7 @@ await_thread_find_count() {
       if (( y >= anchor_y-5 && y <= anchor_y+5 )) &&
          project_literal "$file" "$input" "$query" 7 &&
          thread_find_count_label "$file" "$count" "$y" &&
-         thread_find_transcript "$file"; then
+         thread_find_transcript "$app" "$file"; then
         return 0
       fi
     fi
@@ -868,10 +872,10 @@ capture_native_thread_find() {
   deadline=$((SECONDS + 60))
   while (( SECONDS < deadline )); do
     "${capture[@]}" -window "$window" "$prefix-transcript.png" || return 1
-    if thread_find_transcript "$prefix-transcript.png"; then break; fi
+    if thread_find_transcript "$app" "$prefix-transcript.png"; then break; fi
     sleep 0.5
   done
-  if ! thread_find_transcript "$prefix-transcript.png"; then
+  if ! thread_find_transcript "$app" "$prefix-transcript.png"; then
     echo "$app: could not verify both saved messages in the opened transcript" >&2
     return 1
   fi
@@ -888,7 +892,7 @@ capture_native_thread_find() {
   xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 || return 1
   xdotool type --clearmodifiers 'release' || return 1
   xdotool mousemove 1390 890 || return 1
-  await_thread_find_count "$window" "$prefix-match.png" 'release' '1/2' "$anchor_y" || return 1
+  await_thread_find_count "$app" "$window" "$prefix-match.png" 'release' '1/2' "$anchor_y" || return 1
 
   # Both pinned bars end 12 px from the pane edge, with 1 px border,
   # 4 px right padding and three 24 px buttons separated by 2 px.
@@ -897,7 +901,7 @@ capture_native_thread_find() {
   local next_x=$((width - 12 - 1 - 4 - 12 - 26))
   if xdotool windowfocus "$window" mousemove --window "$window" "$next_x" "$anchor_y" click 1 &&
      xdotool mousemove 1390 890 &&
-     await_thread_find_count "$window" "$prefix-next.png" 'release' '2/2' "$anchor_y"; then
+     await_thread_find_count "$app" "$window" "$prefix-next.png" 'release' '2/2' "$anchor_y"; then
     rm -f -- "$prefix-next-unverified" || return 1
   else
     echo "$app: optional Find Next diagnostic not verified" >&2
@@ -913,7 +917,7 @@ capture_native_thread_find() {
   xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 key ctrl+a || return 1
   xdotool type --clearmodifiers 'absent' || return 1
   xdotool mousemove 1390 890 || return 1
-  await_thread_find_count "$window" "$prefix-no-match.png" 'absent' '0/0' "$anchor_y"
+  await_thread_find_count "$app" "$window" "$prefix-no-match.png" 'absent' '0/0' "$anchor_y"
 }
 
 seed_butler_thread_find() {

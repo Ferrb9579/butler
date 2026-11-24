@@ -5,20 +5,34 @@ use crate::{
     typography,
     ui::{Button, ButtonStyle, ButtonVariant},
 };
-use incular::{prelude::*, widgets::MenuController};
-use std::rc::Rc;
+use incular::{gestures::GestureCallbacks, prelude::*, widgets::MenuController};
+use std::{cell::Cell, rc::Rc};
 use uuid::Uuid;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Place {
+    Header,
+    Sidebar,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Target {
+    id: Uuid,
+    place: Place,
+}
 
 #[derive(Clone)]
 pub struct Editor {
-    thread: Signal<Option<Uuid>>,
+    target: Signal<Option<Target>>,
+    focused: Rc<Cell<Option<Target>>>,
     input: TextEditingController,
 }
 
 impl Default for Editor {
     fn default() -> Self {
         Self {
-            thread: Signal::new(None),
+            target: Signal::new(None),
+            focused: Rc::new(Cell::new(None)),
             input: TextEditingController::new(),
         }
     }
@@ -26,12 +40,72 @@ impl Default for Editor {
 
 impl Editor {
     pub fn clear(&self) {
-        self.thread.set(None);
+        self.focused.set(None);
+        self.target.set(None);
+    }
+
+    pub fn clear_sidebar(&self) {
+        if self
+            .target
+            .get()
+            .is_some_and(|target| target.place == Place::Sidebar)
+        {
+            self.clear();
+        }
+    }
+
+    fn start(&self, id: Uuid, title: &str, place: Place) {
+        self.focused.set(None);
+        self.input.set_text(title);
+        self.target.set(Some(Target { id, place }));
+    }
+
+    pub fn sidebar_editor(
+        &self,
+        id: Uuid,
+        commit: impl Fn(Uuid, &str) + 'static,
+    ) -> Option<Widget> {
+        let target = Target {
+            id,
+            place: Place::Sidebar,
+        };
+        (self.target.get() == Some(target)).then(|| {
+            Widget::from(
+                Container::new()
+                    .height(32.0)
+                    .padding(EdgeInsets::symmetric(12.0, 0.0))
+                    .alignment(Alignment::CENTER_LEFT)
+                    .child(self.input_view(target, commit)),
+            )
+        })
+    }
+
+    pub fn sidebar_action(&self, id: Uuid, title: &str, row: impl Into<Widget>) -> Widget {
+        let editor = self.clone();
+        let title = title.to_owned();
+        KeyboardListener::new(row)
+            .include_semantics(false)
+            .on_key(move |event| {
+                if event.state.is_down()
+                    && !event.repeat
+                    && event.key == KeyboardKey::Named(NamedKey::F2)
+                {
+                    editor.start(id, &title, Place::Sidebar);
+                    true
+                } else {
+                    false
+                }
+            })
+            .into()
     }
 
     pub fn view(&self, id: Uuid, title: &str, commit: impl Fn(Uuid, &str) + 'static) -> Widget {
-        if self.thread.get() == Some(id) {
-            return self.input_view(id, commit);
+        let target = Target {
+            id,
+            place: Place::Header,
+        };
+        if self.target.get() == Some(target) {
+            return self.input_view(target, commit);
         }
         let menu = MenuController::new();
         let menu_to_open = menu.clone();
@@ -84,8 +158,7 @@ impl Editor {
             )
             .on_click(move || {
                 close.close();
-                editor.input.set_text(original.clone());
-                editor.thread.set(Some(id));
+                editor.start(id, &original, Place::Header);
             });
             let width = 168.0;
             let panel = Container::new()
@@ -124,7 +197,7 @@ impl Editor {
         .into()
     }
 
-    fn input_view(&self, id: Uuid, commit: impl Fn(Uuid, &str) + 'static) -> Widget {
+    fn input_view(&self, target: Target, commit: impl Fn(Uuid, &str) + 'static) -> Widget {
         let editor = self.clone();
         let guard = Rc::new(commit);
         let input = EditableText::new(self.input.clone())
@@ -143,11 +216,35 @@ impl Editor {
             incular::widgets::internal::ExplicitSemantics::new(SemanticRole::TextField)
                 .label("Thread title"),
         );
+        let blur_editor = self.clone();
+        let blur_commit = guard.clone();
+        let field = GestureDetector::new(field).callbacks(GestureCallbacks {
+            on_focus_within: Some(Rc::new(move |focused| {
+                if blur_editor.target.get() != Some(target) {
+                    return;
+                }
+                if focused {
+                    if blur_editor.focused.replace(Some(target)) != Some(target) {
+                        // Select the title on actual focus, not by faking autofocus.
+                        blur_editor.input.select_all();
+                    }
+                } else if blur_editor.focused.replace(None) == Some(target)
+                    && target.place == Place::Sidebar
+                    && blur_editor.input.preedit().is_none()
+                    && blur_editor.input.composing().is_none()
+                {
+                    let title = blur_editor.input.text();
+                    blur_editor.clear();
+                    blur_commit(target.id, &title);
+                }
+            })),
+            ..GestureCallbacks::default()
+        });
         KeyboardListener::new(field)
             .include_semantics(false)
             .on_key(move |event| {
                 if !event.state.is_down()
-                    || editor.thread.get() != Some(id)
+                    || editor.target.get() != Some(target)
                     || editor.input.preedit().is_some()
                     || editor.input.composing().is_some()
                 {
@@ -157,7 +254,7 @@ impl Editor {
                     KeyboardKey::Named(NamedKey::Escape) => editor.clear(),
                     KeyboardKey::Named(NamedKey::Enter) => {
                         editor.clear();
-                        guard(id, &editor.input.text());
+                        guard(target.id, &editor.input.text());
                     }
                     _ => return false,
                 }

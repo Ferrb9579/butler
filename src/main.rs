@@ -241,7 +241,8 @@ fn application_with_transport(
                     .map_or(Workspace::Scratch, |p| Workspace::Local(p.root.clone()));
                 let rename_workspace = target.clone();
                 let rename_store = history_store.clone();
-                let rename_selected = selected_thread.clone();
+                let rename_project = active_project.clone();
+                let rename_scratch = scratch_open.clone();
                 let rename_error = history_error.clone();
                 let rename_history = thread_history.clone();
                 let history = thread_history.get();
@@ -269,10 +270,11 @@ fn application_with_transport(
                     thread_find_input.clone(),
                     thread_title_editor.clone(),
                     move |id, title| {
-                        if !rename_selected
+                        let active_scope = rename_project
                             .get()
-                            .is_some_and(|turn| turn.id == id && turn.workspace == rename_workspace)
-                        {
+                            .map(|p| Workspace::Local(p.root))
+                            .or_else(|| rename_scratch.get().then_some(Workspace::Scratch));
+                        if active_scope.as_ref() != Some(&rename_workspace) {
                             return;
                         }
                         let result = rename_store
@@ -1306,6 +1308,63 @@ mod ui_tests {
             sim.click("Open thread: Unrelated history").unwrap();
             assert!(sim.focus("Close thread find").is_err());
         });
+    }
+
+    #[test]
+    fn sidebar_f2_renames_another_thread_without_opening_it_and_ignores_search_rows() {
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        let folder = tmp.0.join("Project");
+        fs::create_dir(&folder).unwrap();
+        let project = LocalProjects::new(&profile).open(&folder).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let store = ThreadStore::new(&profile);
+        for (prompt, reply) in [
+            ("Keep me open", "The active transcript remains here."),
+            ("Change this title", "This is not the active transcript."),
+        ] {
+            store
+                .save(&Conversation {
+                    id: uuid::Uuid::new_v4(),
+                    workspace: Workspace::Local(project.root.clone()),
+                    prompt: prompt.into(),
+                    reply: reply.into(),
+                    follow_ups: Vec::new(),
+                })
+                .unwrap();
+        }
+        let mut app = application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Open thread: Keep me open").unwrap();
+            sim.focus("Open thread: Change this title").unwrap();
+            sim.press_key(KeyboardKey::Named(NamedKey::F2), Code::F2)
+                .unwrap();
+            sim.focus("Thread title").unwrap();
+            sim.type_text("Clean title").unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.focus("Open thread: Clean title").unwrap();
+            sim.press_key(KeyboardKey::Named(NamedKey::F2), Code::F2)
+                .unwrap();
+            sim.focus("Thread title").unwrap();
+            sim.type_text("Saved on blur").unwrap();
+            sim.focus("Search threads").unwrap();
+            sim.focus("Open thread: Saved on blur").unwrap();
+            sim.focus("Thread actions for Keep me open").unwrap();
+            sim.type_into("Search threads", "saved on blur").unwrap();
+            sim.focus("Open thread: Saved on blur").unwrap();
+            sim.press_key(KeyboardKey::Named(NamedKey::F2), Code::F2)
+                .unwrap();
+            assert!(sim.focus("Thread title").is_err());
+            sim.focus("The active transcript remains here.").unwrap();
+        });
+        let titles = store
+            .history(&Workspace::Local(project.root))
+            .unwrap()
+            .into_iter()
+            .map(|row| row.title)
+            .collect::<Vec<_>>();
+        assert!(titles.iter().any(|title| title == "Saved on blur"));
+        assert!(titles.iter().any(|title| title == "Keep me open"));
     }
 
     #[test]

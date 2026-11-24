@@ -329,7 +329,12 @@ fn best_title_token(text: &[char], boundaries: &[bool], token: &[char]) -> f32 {
 /// Build inside the same retained sidebar owner as the results; result IDs
 /// must be given in their current visible order. A pointer selection should
 /// call Search::reset before dispatch, just as keyboard selection does here.
-pub fn field(search: Search, result_ids: Vec<Uuid>, on_choose: impl Fn(Uuid) + 'static) -> Widget {
+pub fn field(
+    search: Search,
+    result_ids: Vec<Uuid>,
+    on_search_edit: impl Fn() + 'static,
+    on_choose: impl Fn(Uuid) + 'static,
+) -> Widget {
     let active = search.active();
     let on_change = search.clone();
     let with_keys = search.clone();
@@ -356,6 +361,7 @@ pub fn field(search: Search, result_ids: Vec<Uuid>, on_choose: impl Fn(Uuid) + '
             // Enter is an explicit list action, not a form completion.
             .on_editing_complete(|| {})
             .on_changed(move |_| {
+                on_search_edit();
                 on_change.highlighted.set(None);
                 on_change.notify_query_change();
                 on_change.invalidate();

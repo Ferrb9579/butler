@@ -38,6 +38,8 @@ pub fn draft(
     let header_icon = project_icon.clone();
     let start_here = Rc::new(start_here);
     let selected = selected.map(Rc::new);
+    let rename = Rc::new(rename);
+    let header_rename = rename.clone();
     let active_header = if let Some(turn) = &selected {
         let saved_title = history
             .iter()
@@ -53,7 +55,9 @@ pub fn draft(
                     .take(72)
                     .collect()
             });
-        title_editor.view(turn.id, &saved_title, rename)
+        title_editor.view(turn.id, &saved_title, move |id, title| {
+            header_rename(id, title)
+        })
     } else {
         breadcrumb_text("New thread", INK)
     };
@@ -99,6 +103,14 @@ pub fn draft(
             .into_iter()
             .map(|(thread, hit)| {
                 let id = thread.id;
+                if !active {
+                    let commit = rename.clone();
+                    if let Some(input) =
+                        title_editor.sidebar_editor(id, move |id, title| commit(id, title))
+                    {
+                        return input;
+                    }
+                }
                 let open_thread = open_thread.clone();
                 let clear = search.clone();
                 let seed = hit.cloned().map(|hit| (hit, search.query()));
@@ -162,7 +174,7 @@ pub fn draft(
                         .on_enter(move |_| hover.highlight(id))
                         .into()
                 } else {
-                    button.into()
+                    title_editor.sidebar_action(id, &thread.title, button)
                 }
             })
             .collect::<Vec<Widget>>();
@@ -188,6 +200,7 @@ pub fn draft(
             threads.push(label(error, 12.0, FontWeight::W400, MUTED));
         }
         let choose_thread = open_thread.clone();
+        let search_title_editor = title_editor.clone();
         let query = search.query();
         sidebar(
             project.as_deref(),
@@ -195,15 +208,20 @@ pub fn draft(
             add_project.clone(),
             Some(new_thread.clone()),
             sidebar_settings.clone(),
-            Some(sidebar_search::field(search.clone(), ids, move |id| {
-                choose_thread(
-                    id,
-                    message_rows
-                        .get(&id)
-                        .cloned()
-                        .map(|hit| (hit, query.clone())),
-                );
-            })),
+            Some(sidebar_search::field(
+                search.clone(),
+                ids,
+                move || search_title_editor.clear_sidebar(),
+                move |id| {
+                    choose_thread(
+                        id,
+                        message_rows
+                            .get(&id)
+                            .cloned()
+                            .map(|hit| (hit, query.clone())),
+                    );
+                },
+            )),
             threads,
         )
     });
