@@ -35,6 +35,7 @@ fn application(
     #[cfg(test)] resume: Option<uuid::Uuid>,
 ) -> Result<Application, Box<dyn std::error::Error>> {
     let settings_open = Signal::new(false);
+    let settings_provider = Signal::new(2_usize);
     #[cfg(test)]
     let fixture_enabled = Signal::new(resume.is_some());
     #[cfg(test)]
@@ -107,15 +108,6 @@ fn application(
                     }
                 }
             })
-        } else if settings_open.get() {
-            let settings_open = settings_open.clone();
-            provider_settings::view(
-                move || {
-                    settings_open.set(false);
-                },
-                #[cfg(test)]
-                fixture_enabled.clone(),
-            )
         } else {
             let project = active_project.get();
             let workspace = if project.is_some() || scratch_open.get() {
@@ -157,7 +149,7 @@ fn application(
             let step = picker.clone();
             let error = picker_error.clone();
             let projects = projects.clone();
-            project_picker::overlay(
+            let desktop = project_picker::overlay(
                 workspace,
                 picker.clone(),
                 path.clone(),
@@ -183,7 +175,22 @@ fn application(
                         }
                     }
                 },
-            )
+            );
+            if settings_open.get() {
+                let settings_open = settings_open.clone();
+                provider_settings::overlay(
+                    desktop,
+                    &device,
+                    settings_provider.clone(),
+                    move || {
+                        settings_open.set(false);
+                    },
+                    #[cfg(test)]
+                    fixture_enabled.clone(),
+                )
+            } else {
+                desktop
+            }
         };
         Directionality::new(TextDirection::Ltr, root).into()
     })?;
@@ -436,6 +443,9 @@ mod ui_tests {
         interact(&mut app, |sim| {
             sim.click("Start without a project").unwrap();
             sim.click("Open provider settings").unwrap();
+            sim.click("Claude").unwrap();
+            sim.click("Sign-in for Claude isn't available in this build.")
+                .unwrap();
             sim.click("Enable offline test provider").unwrap();
             sim.click("Back to workspace").unwrap();
             assert!(sim.focus("Ask anything").is_ok());

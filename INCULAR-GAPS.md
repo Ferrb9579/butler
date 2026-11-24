@@ -28,6 +28,18 @@ When a gap affects Butler, record the Incular revision, platform or renderer if 
 
 **Butler implication:** Convert offsets at a Flutter or UTF-16 protocol boundary; don't copy numeric offsets directly into selection, composing state, or a ported test. Native caret movement itself has not been found to differ here.
 
+### IG-004: Standard modal routes do not contain keyboard focus
+
+**Status:** Source-verified behavior gap. Flutter's in-window [Material `showDialog`](https://api.flutter.dev/flutter/material/showDialog.html) defaults to closed-loop focus traversal. Incular explicitly documents that [modal route focus containment is unimplemented](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-navigation/src/presentation.rs#L62-L68); the pointer barrier alone does not provide the traversal policy. Incular's [Material dialog handle](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-material/src/feedback/dialog_handles.rs#L83-L117) does not expose a replacement for that policy. This is independent of returning focus to the trigger after a route closes.
+
+**Repro / acceptance:** Place two focusable controls inside an in-window modal and one outside. Repeated Tab from the last control should cycle to the first; repeated Shift+Tab from the first should cycle to the last. The underlying control should never gain focus while the modal is open. Runtime twin check pending.
+
+### IG-005: Stock Material dialog scrim differs in color and theme handling
+
+**Status:** Source-verified visual and theme difference. Flutter's [`showDialog`](https://api.flutter.dev/flutter/material/showDialog.html) uses an explicit scrim color first, then the dialog theme's color, then `Colors.black54` (alpha 138/255). The pinned [Incular Material `DialogHandle`](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-material/src/feedback/dialog_handles.rs#L32-L41) defaults to black at alpha 96/255 and uses that stored color unless the caller applies [`barrier_color`](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-material/src/feedback/dialog_handles.rs#L67-L99). Butler's custom blurred overlays use their own styles, so their images do not prove this stock-widget difference.
+
+**Repro / acceptance:** Show each framework's stock Material dialog over white with default theme. Sample a backdrop pixel outside the dialog after the animation. Repeat with a dialog theme specifying a different barrier color. On Incular, use an explicit barrier color until default/themed parity is implemented. Runtime twin check pending.
+
 ## Investigations, not confirmed Incular gaps
 
 - Butler's compact scratch button clipped its label before switching from an outer width constraint to `ButtonStyle::fixed_size` ([native capture before the fix](https://github.com/Ferrb9579/butler/actions/runs/45329928604)). Reproduce the same widget constraints, font and padding in Flutter before blaming framework layout.
