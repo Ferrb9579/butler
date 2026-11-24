@@ -83,10 +83,10 @@ capture_one() (
     xdotool windowfocus "$window" mousemove --window "$window" 365 620 click 1
     xdotool mousemove 1390 890
     if await_text "$window" "$out/t3-after-welcome.png" 'what should we work on' '465x103+535+355'; then
-      # Save a diagnostic reference of the next route, independent of Butler's compositor.
+      # A profile without a provider must enter the gated scratch composer.
       xdotool windowfocus "$window" mousemove --window "$window" 828 462 click 1
       xdotool mousemove 1390 890
-      await_text "$window" "$out/t3-scratch-draft.png" 'ask anything|no project|new thread' || true
+      assert_provider_gate "$window" "$out/t3-scratch-draft.png"
     else
       touch "$out/t3-landing-unverified"
     fi
@@ -140,15 +140,16 @@ await_text() {
   return 1
 }
 
+assert_provider_gate() {
+  local window=$1 file=$2
+  await_text "$window" "$file" 'Enable a provider in Settings to send a message' '600x64+295+333'
+}
+
 verify_scratch_draft() {
   local window=$1 prefix=$2
   xdotool windowfocus "$window" mousemove --window "$window" 828 462 click 1
   xdotool mousemove 1390 890
-  await_text "$window" "$prefix-scratch.png" 'Ask anything' '240x45+410+744'
-  xdotool windowfocus "$window" mousemove --window "$window" 516 760 click 1
-  xdotool type --clearmodifiers 'Draft check 42'
-  xdotool mousemove 1390 890
-  await_text "$window" "$prefix-typed.png" 'Draft check 42' '280x45+410+744'
+  assert_provider_gate "$window" "$prefix-scratch.png"
 }
 
 set +e
@@ -172,6 +173,9 @@ if (( reference_rc == 0 && butler_rc == 0 )); then
   compare_frames t3-startup butler-startup startup
   if [[ ! -e "$out/t3-landing-unverified" && -f "$out/t3-after-welcome.png" && -f "$out/butler-after-welcome.png" ]]; then
     compare_frames t3-after-welcome butler-after-welcome empty-workspace
+    if [[ -f "$out/t3-scratch-draft.png" && -f "$out/butler-after-welcome-scratch.png" ]]; then
+      compare_frames t3-scratch-draft butler-after-welcome-scratch scratch-provider-gate
+    fi
   fi
 fi
 if (( reference_rc > 0 || butler_rc > 0 )); then

@@ -1,69 +1,111 @@
+//! Draft immediately after "Start without a project" on a profile with no provider.
+//! Reference: T3 Code v0.1.11 desktop, native fixture 45329928604.
+
 use incular::prelude::*;
 
-const CANVAS: Color = Color::rgba(0, 0, 0, 255);
-const SURFACE: Color = Color::rgba(18, 18, 18, 255);
-const FOREGROUND: Color = Color::rgba(245, 245, 245, 255);
-const MUTED: Color = Color::rgba(163, 163, 163, 255);
-const SIDEBAR_WIDTH: f32 = 256.0;
+use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, label, sidebar, space};
 
-pub fn view(search: TextEditingController, prompt: TextEditingController) -> Widget {
-    Row::new(vec![sidebar(search), Expanded::new(thread(prompt)).into()])
-        .alignment(CrossAxisAlignment::Stretch)
-        .into()
-}
-
-fn sidebar(search: TextEditingController) -> Widget {
-    Container::new()
-        .width(SIDEBAR_WIDTH)
-        .color(SURFACE)
-        .padding(EdgeInsets::all(12.0))
-        .child(Column::new(Vec::<Widget>::from([
-            editor(search, "Search"),
-            SizedBox::new().height(16.0).into(),
-            label("Projects", 12.0, MUTED),
-        ])))
-        .into()
-}
-
-fn thread(prompt: TextEditingController) -> Widget {
-    let composer = Container::new()
-        .width(720.0)
-        .padding(EdgeInsets::all(10.0))
-        .decoration(
-            BoxDecoration::new()
-                .color(SURFACE)
-                .border_radius(BorderRadius::all(Radius::circular(16.0))),
+pub fn no_provider_scratch() -> Widget {
+    Row::new(vec![
+        sidebar(true),
+        Container::new().width(1.0).color(RULE).into(),
+        Expanded::new(
+            Container::new().color(PAGE).child(
+                Column::new(vec![
+                    Widget::from(
+                        Container::new()
+                            .height(40.0)
+                            .padding(EdgeInsets::symmetric(20.0, 0.0))
+                            .alignment(Alignment::CENTER_LEFT)
+                            .child(label(
+                                "⬚ No project   /   New thread",
+                                14.0,
+                                FontWeight::W500,
+                                INK,
+                            )),
+                    ),
+                    Expanded::new(LayoutBuilder::new(|_, constraints| {
+                        let width = constraints.max_width();
+                        let height = constraints.max_height();
+                        let margin = if width >= 720.0 { 48.0 } else { 16.0 };
+                        let composer_width = (width - 2.0 * margin).clamp(1.0, 652.0);
+                        let top = (height * 0.28).max(28.0);
+                        Container::new()
+                            .padding(EdgeInsets::symmetric(margin, 0.0))
+                            .child(
+                                Column::new(vec![
+                                    space(top),
+                                    Container::new()
+                                        .width(composer_width)
+                                        .child(composer())
+                                        .into(),
+                                ])
+                                .cross_axis_alignment(CrossAxisAlignment::Start),
+                            )
+                            .into()
+                    }))
+                    .into(),
+                ])
+                .cross_axis_alignment(CrossAxisAlignment::Stretch),
+            ),
         )
-        .child(editor(prompt, "Ask anything..."));
+        .into(),
+    ])
+    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+    .into()
+}
 
+fn composer() -> Widget {
+    Column::new(vec![
+        centered("What should we work on?", 32.0, FontWeight::W400),
+        space(10.0),
+        centered("No project", 14.0, FontWeight::W500),
+        space(20.0),
+        Container::new()
+            .height(112.0)
+            .padding(EdgeInsets::all(16.0))
+            .decoration(
+                BoxDecoration::new()
+                    .color(WHITE)
+                    .border_radius(BorderRadius::all(Radius::circular(18.0))),
+            )
+            .child(
+                Column::new(vec![
+                    label(
+                        "Enable a provider in Settings to send a message",
+                        14.0,
+                        FontWeight::W400,
+                        MUTED,
+                    ),
+                    Spacer::new().into(),
+                    Row::new(vec![
+                        label("♧", 15.0, FontWeight::W400, MUTED),
+                        Spacer::new().into(),
+                        label(
+                            "ⓘ Open provider settings       ♩     ↑",
+                            14.0,
+                            FontWeight::W400,
+                            MUTED,
+                        ),
+                    ])
+                    .into(),
+                ])
+                .cross_axis_alignment(CrossAxisAlignment::Start),
+            )
+            .into(),
+        space(10.0),
+        Container::new()
+            .alignment(Alignment::CENTER_RIGHT)
+            .child(label("⊘ Full access", 12.0, FontWeight::W400, MUTED))
+            .into(),
+    ])
+    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+    .into()
+}
+
+fn centered(text: &str, size: f32, weight: FontWeight) -> Widget {
     Container::new()
-        .color(CANVAS)
-        .padding(EdgeInsets::all(16.0))
-        .child(Column::new(Vec::<Widget>::from([
-            Container::new()
-                .height(32.0)
-                .alignment(Alignment::CENTER_LEFT)
-                .child(label("New thread", 14.0, FOREGROUND))
-                .into(),
-            Spacer::new().into(),
-            Container::new()
-                .alignment(Alignment::CENTER)
-                .child(composer)
-                .into(),
-        ])))
-        .into()
-}
-
-fn label(text: &str, size: f32, color: Color) -> Widget {
-    Text::new(text)
-        .style(TextStyle::new().font_size(size).color(color))
-        .into()
-}
-
-fn editor(controller: TextEditingController, placeholder: &str) -> Widget {
-    EditableText::new(controller)
-        .placeholder(placeholder)
-        .placeholder_color(MUTED)
-        .style(TextStyle::new().font_size(14.0).color(FOREGROUND))
+        .alignment(Alignment::CENTER)
+        .child(label(text, size, weight, INK))
         .into()
 }

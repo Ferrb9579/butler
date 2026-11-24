@@ -5,27 +5,23 @@ use incular::{
     prelude::*,
 };
 
-const PAGE: Color = Color::rgba(252, 252, 252, 255);
+pub(crate) const PAGE: Color = Color::rgba(252, 252, 252, 255);
 const SIDEBAR: Color = Color::rgba(249, 249, 249, 255);
-const RULE: Color = Color::rgba(228, 228, 231, 255);
-const INK: Color = Color::rgba(38, 38, 38, 255);
-const MUTED: Color = Color::rgba(113, 113, 122, 255);
+pub(crate) const RULE: Color = Color::rgba(228, 228, 231, 255);
+pub(crate) const INK: Color = Color::rgba(38, 38, 38, 255);
+pub(crate) const MUTED: Color = Color::rgba(113, 113, 122, 255);
 const FAINT: Color = Color::rgba(161, 161, 170, 255);
 const BLUE: Color = Color::rgba(27, 78, 216, 255);
-const WHITE: Color = Color::rgba(255, 255, 255, 255);
+pub(crate) const WHITE: Color = Color::rgba(255, 255, 255, 255);
 
 pub fn view(scratch_available: bool, open_scratch: impl Fn() + 'static) -> Widget {
     let mut buttons = vec![project_button("＋ Add project", 116.0, 28.0, BLUE, WHITE)];
     if scratch_available {
         buttons.push(SizedBox::new().width(8.0).into());
         buttons.push(
-            SizedBox::new()
-                .width(186.0)
-                .child(
-                    Button::new("⬚  Start without a project")
-                        .style(style(28.0, WHITE, INK))
-                        .on_click(open_scratch),
-                )
+            Button::new("Start without a project")
+                .style(style(28.0, WHITE, INK).fixed_size(Size::new(186.0, 28.0)))
+                .on_click(open_scratch)
                 .into(),
         );
     }
@@ -49,7 +45,7 @@ pub fn view(scratch_available: bool, open_scratch: impl Fn() + 'static) -> Widge
     ])
     .main_axis_size(MainAxisSize::Min);
     Row::new(vec![
-        sidebar(),
+        sidebar(false),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
@@ -66,7 +62,12 @@ pub fn view(scratch_available: bool, open_scratch: impl Fn() + 'static) -> Widge
     .into()
 }
 
-fn sidebar() -> Widget {
+pub(crate) fn sidebar(scratch: bool) -> Widget {
+    let empty_caption = if scratch {
+        "No threads yet"
+    } else {
+        "No projects yet"
+    };
     Container::new()
         .width(255.0)
         .color(SIDEBAR)
@@ -74,9 +75,13 @@ fn sidebar() -> Widget {
             line("◧    Butler   ‹   ›", 40.0, INK),
             line("⌕   Search", 48.0, MUTED),
             space(24.0),
-            label("No projects yet", 12.0, FontWeight::W400, FAINT),
+            label(empty_caption, 12.0, FontWeight::W400, FAINT),
             space(8.0),
-            project_button("＋ Add project", 96.0, 26.0, SIDEBAR, MUTED),
+            if scratch {
+                space(26.0)
+            } else {
+                project_button("＋ Add project", 96.0, 26.0, SIDEBAR, MUTED)
+            },
             Spacer::new().into(),
             line("⚙     ⑂     ⊙     ▥", 48.0, MUTED),
         ]))
@@ -118,14 +123,19 @@ fn style(height: f32, background: Color, ink: Color) -> ButtonStyle {
         .background(background)
         .foreground(ink)
         .padding(EdgeInsets::symmetric(8.0, 0.0))
-        .text_style(TextStyle::new().font_size(14.0))
+        .text_style(
+            TextStyle::new()
+                .font_family("Liberation Sans")
+                .font_size(14.0),
+        )
         .border_radius(8.0)
 }
 
-fn label(text: &str, size: f32, weight: FontWeight, color: Color) -> Widget {
+pub(crate) fn label(text: &str, size: f32, weight: FontWeight, color: Color) -> Widget {
     Text::new(text)
         .style(
             TextStyle::new()
+                .font_family("Liberation Sans")
                 .font_size(size)
                 .font_weight(weight)
                 .color(color),
@@ -133,6 +143,6 @@ fn label(text: &str, size: f32, weight: FontWeight, color: Color) -> Widget {
         .into()
 }
 
-fn space(height: f32) -> Widget {
+pub(crate) fn space(height: f32) -> Widget {
     SizedBox::new().height(height).into()
 }

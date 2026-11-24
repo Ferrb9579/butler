@@ -35,8 +35,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let error = Signal::new(completed.err().map(|error| error.to_string()));
     let agents_open = Signal::new(true);
     let scratch_open = Signal::new(false);
-    let search = TextEditingController::new();
-    let prompt = TextEditingController::new();
     let device = machine_label();
 
     let app = Application::new(move |_cx| {
@@ -62,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             })
         } else if scratch_open.get() {
-            workspace::view(search.clone(), prompt.clone())
+            workspace::no_provider_scratch()
         } else {
             match resolve_landing(&[], true, profile.is_some()) {
                 Landing::Empty {
