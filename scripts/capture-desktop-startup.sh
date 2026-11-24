@@ -76,7 +76,9 @@ capture_one() (
   elif [[ "$name" == t3-thread-find || "$name" == butler-thread-find ]]; then
     local thread_title='Release launch check'
     if [[ "$name" == butler-thread-find ]]; then thread_title='Does the release open'; fi
-    await_project_phrase "$window" "$out/$name-startup.png" '246x650+6+75' "$thread_title" 11 >/dev/null || return 1
+    local title_crop
+    title_crop=$(thread_find_row_crop "${name%-thread-find}") || return 1
+    await_project_phrase "$window" "$out/$name-startup.png" "$title_crop" "$thread_title" 11 >/dev/null || return 1
   else
     await_text "$window" "$out/$name-startup.png" 'What should we work on' '465x103+535+355'
   fi
@@ -807,6 +809,17 @@ verify_native_thread_chooser() {
   echo 'Verified native chooser choices, filter, fresh draft, saved project order/titles, and unchanged fixture trees' | tee -a "$notes"
 }
 
+thread_find_row_crop() {
+  if [[ "$1" == butler ]]; then
+    # Verified on the real 5c2504d fixture frame. The generic tall
+    # sidebar crop misses this one thin row when no other history exists.
+    # Keep room for the taller project caption introduced at 93eaf3a.
+    printf '%s\n' '220x82+8+148'
+  else
+    printf '%s\n' '246x650+6+75'
+  fi
+}
+
 thread_find_transcript() {
   # The native Butler transcript starts 16 px below its 40 px header.
   # Keep that first line, while excluding the header/sidebar title.
@@ -850,12 +863,13 @@ capture_native_thread_find() {
   local window=$1 app=$2 title=$3 tick coords x y anchor_y input
   local prefix="$out/$app-thread-find" bar='278x92+988+37'
   click_project_control "$window" "$prefix-thread-row.png" '246x650+6+75' "$title" 11 || return 1
-  for ((tick=0; tick<18; tick++)); do
+  deadline=$((SECONDS + 60))
+  while (( SECONDS < deadline )); do
     "${capture[@]}" -window "$window" "$prefix-transcript.png" || return 1
     if thread_find_transcript "$prefix-transcript.png"; then break; fi
     sleep 0.5
   done
-  if (( tick == 18 )); then
+  if ! thread_find_transcript "$prefix-transcript.png"; then
     echo "$app: could not verify both saved messages in the opened transcript" >&2
     return 1
   fi
@@ -928,6 +942,43 @@ butler_thread_find_snapshot() (
   find project state/butler/threads -printf '%p\t%y\t%m\t%s\t%T@\t%C@\n' | LC_ALL=C sort
 )
 
+t3_find_diagnostic() {
+  local home=$1 summary="$out/t3-thread-find-backend-diagnostic.txt"
+  local log="$home/userdata/logs/server-child.log"
+  python3 - "$home/userdata/statev2.sqlite" >"$summary" <<'PY'
+import pathlib
+import sqlite3
+import sys
+
+path = pathlib.Path(sys.argv[1])
+thread = "launch-check-thread"
+try:
+    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+        for label, query in (
+            ("thread rows", "select count(*) from orchestration_v2_projection_threads where thread_id=?"),
+            ("message rows", "select count(*) from orchestration_v2_projection_messages where thread_id=?"),
+            ("message turn items", "select count(*) from orchestration_v2_projection_turn_items where thread_id=? and type in ('user_message', 'assistant_message')"),
+        ):
+            try:
+                print(f"{label}: {db.execute(query, (thread,)).fetchone()[0]}")
+            except sqlite3.Error as error:
+                print(f"{label}: {type(error).__name__}")
+except sqlite3.Error as error:
+    print(f"Could not inspect disposable reference fixture: {type(error).__name__}")
+PY
+  if [[ -f "$log" ]]; then
+    # Count evidence, not raw log lines: loopback authorization values or
+    # runtime configuration may appear in server logs even with a fresh home.
+    local pattern n
+    for pattern in 'timeline' 'SqliteError|SQLITE_' 'SchemaError|ParseError' 'launch-check-thread'; do
+      n=$(grep -Eic "$pattern" "$log") || true
+      printf 'Backend log matching /%s/: %s\n' "$pattern" "${n:-0}" >>"$summary"
+    done
+  else
+    printf '%s\n' 'Packaged backend did not emit a server-child.log.' >>"$summary"
+  fi
+}
+
 verify_native_thread_find() {
   local source=$1 app name runtime binary before after state rc
   local fixture_sha='e65f15f89a847a264cf4366cd7bcdc31cef1d5fbfd07707ed497cc0f045357b5'
@@ -967,6 +1018,7 @@ verify_native_thread_find() {
       T3CODE_DISABLE_AUTO_UPDATE=true GIT_ALLOW_PROTOCOL= GIT_TERMINAL_PROMPT=0 \
       CAPTURE_PROFILE="$name" capture_one "$name" "$binary"
     rc=$?
+    if [[ "$app" == t3 ]]; then t3_find_diagnostic "$runtime/t3-code"; fi
     if (( rc != 0 )); then
       printf '%s: native Find diagnostic incomplete; see its unverified marker\n' "$app" | tee -a "$notes" >&2
       continue
