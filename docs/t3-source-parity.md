@@ -77,9 +77,10 @@ controls, and text shaping/rendering comparisons are still unverified.
   and then (988, 100), not just the requested layout.
 - The first row shows the real local device and uses the canonical workspace
   path for its tooltip. The pinned header toggle and Mod+Shift+B affect
-  only the selected saved thread. Closed state is session-local in Butler.
-  Narrow popovers, persistent visibility, copying the path, and the editor,
-  scripts, and Git rows are not part of this slice.
+  only the selected saved thread. Like the pinned `rightPanelStore.ts`,
+  Butler stores only explicit inline closures in the local profile and
+  clears them when reopened. Narrow transient popovers, copying the path,
+  and the editor, scripts, and Git rows are not part of this slice.
 
 ### Saved-thread composer, without a provider
 

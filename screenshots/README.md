@@ -145,3 +145,9 @@ newly verified states; T3 Code was v0.1.11
 `fef5acc4ecffa496d56315f8a5341ac387c8b7a7`. The workflow typed into the Find
 field and clicked Next without submitting any message. This verifies the
 interaction and counts in this fixture, not visual parity.
+
+## Saved-thread composer and details (layout comparison)
+
+- [T3 Code](t3/saved-thread-composer-light-1280x800.png) · [Butler](butler/saved-thread-composer-light-1280x800.png)
+- Original 1280×800 X11 frames from [native run 45421205351](https://github.com/Ferrb9579/butler/actions/runs/45421205351), T3 Code `59651c1761f6c63e9b6056839067066968e6a406`, Butler `7129b926f41e53ac64f3a6d8daa4a46d0a381844`. Both show the same saved transcript with Find closed, empty composer, and visible workspace details. T3 retained its default provider selection with the missing-provider alert dismissed. No message was submitted.
+- The dock spans the same x304–955 and ends at y779 in both; Butler's top is 3 px higher. Butler shows the unavailable-provider prompt, a disabled Send and one real details row. Provider, microphone, attachment and other details controls are not yet mirrored. 265,425 of 1,024,000 raw pixels differ. This is a layout comparison, not visual parity or proof of native text entry.

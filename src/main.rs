@@ -87,6 +87,7 @@ fn application_with_transport(
     let profile = state.as_ref().map(Profile::new);
     let provider_names = provider_settings::Names::new(profile.clone());
     let history_store = state.as_ref().map(ThreadStore::new);
+    let details_profile = state.clone();
     let projects = state.map(LocalProjects::new);
     let saved_project = projects.as_ref().map(LocalProjects::list).transpose();
     let active_project = Signal::new(
@@ -117,7 +118,7 @@ fn application_with_transport(
     let posted_message_jump = Cell::new(None);
     let thread_find_input = TextEditingController::new();
     let thread_title_editor = thread_title::Editor::default();
-    let details_visibility = thread_details::Visibility::default();
+    let details_visibility = thread_details::Visibility::new(details_profile);
     let picker_error = Signal::new(
         saved_project
             .err()
@@ -1866,7 +1867,7 @@ mod ui_tests {
     }
 
     #[test]
-    fn local_thread_details_move_below_find_and_toggle_independently() {
+    fn local_thread_details_move_below_find_and_persist_per_thread() {
         use incular::rendering::PaintCommand;
 
         let tmp = Fixture::new();
@@ -1888,10 +1889,17 @@ mod ui_tests {
                 })
                 .unwrap();
         }
-        let mut app =
-            application(Some(profile), Some(tmp.0.clone()), "Local fixture".into()).unwrap();
-        let window = app.active_window_ids()[0];
+        let open_profile = || {
+            application(
+                Some(profile.clone()),
+                Some(tmp.0.clone()),
+                "Local fixture".into(),
+            )
+            .unwrap()
+        };
+        let mut app = open_profile();
         let card = |app: &mut Application| {
+            let window = app.active_window_ids()[0];
             app.process_runtime_work();
             let (list, _) = app
                 .run_window_frame_at(
@@ -1989,7 +1997,29 @@ mod ui_tests {
             sim.click("Open thread: First saved discussion").unwrap()
         });
         assert_eq!(card(&mut app), None);
+        drop(app);
+        let mut app = open_profile();
+        interact(&mut app, |sim| {
+            sim.click("Open thread: Second saved discussion").unwrap();
+            sim.focus("Thread actions for Second saved discussion")
+                .unwrap();
+        });
+        assert_eq!(card(&mut app), Some(Offset::new(988.0, 52.0)));
+        interact(&mut app, |sim| {
+            sim.click("Open thread: First saved discussion").unwrap();
+            sim.focus("Thread actions for First saved discussion")
+                .unwrap();
+        });
+        assert_eq!(card(&mut app), None);
         interact(&mut app, |sim| sim.click(thread_details::TOGGLE).unwrap());
+        assert_eq!(card(&mut app), Some(Offset::new(988.0, 52.0)));
+        drop(app);
+        let mut app = open_profile();
+        interact(&mut app, |sim| {
+            sim.click("Open thread: First saved discussion").unwrap();
+            sim.focus("Thread actions for First saved discussion")
+                .unwrap();
+        });
         assert_eq!(card(&mut app), Some(Offset::new(988.0, 52.0)));
         assert_eq!(fs::read(folder.join("untouched.txt")).unwrap(), b"keep me");
         assert_eq!(fs::read_dir(folder).unwrap().count(), 1);
