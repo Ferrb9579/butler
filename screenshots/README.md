@@ -1,5 +1,9 @@
 # Screenshot comparisons
 
+See the [published screenshot audit](AUDIT.md) for visible icon, layout,
+and fixture differences, with historical captures distinguished from current
+diagnostics.
+
 Use the same PNG filename in both directories for the same screen, fixture,
 theme, and viewport. For example:
 
