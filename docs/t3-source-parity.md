@@ -66,3 +66,8 @@ Framework parity gaps belong in `INCULAR-GAPS.md`, not in application shims.
 Settings navigation glyphs are the original Lucide 0.564.0 paths from the pinned
 AppImage and the custom SnapShots path from the pinned TSX. Butler draws them
 with the low-level Incular Icon widget. The notices are in `LICENSES/`.
+
+The Settings overlay follows the pinned `AppRouteModal.tsx:68–81` pointer
+dismissal: a tap must start on the backdrop and release outside the panel.
+A pointer gesture crossing the panel boundary does not dismiss it. Escape,
+keyboard focus restoration, and close animation are not implemented here.

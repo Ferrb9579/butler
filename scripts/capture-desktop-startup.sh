@@ -107,6 +107,8 @@ capture_one() (
       if ! await_text "$window" "$out/t3-provider-settings.png" 'Add provider|Refresh provider status' ||
          ! assert_disabled_cursor "$window" "$out/t3-provider-settings.png"; then
         touch "$out/t3-provider-settings-unverified"
+      else
+        capture_about_settings "$window" t3
       fi
     else
       touch "$out/t3-landing-unverified"
@@ -134,6 +136,9 @@ capture_one() (
     xdotool mousemove 1390 890
     await_text "$window" "$out/butler-provider-settings.png" 'Display[[:space:]]*name'
     assert_disabled_cursor "$window" "$out/butler-provider-settings.png"
+    if [[ "${CAPTURE_REFERENCE_LANDING:-0}" == 1 ]]; then
+      capture_about_settings "$window" butler
+    fi
   elif [[ "$name" == butler-import ]]; then
     xdotool windowfocus "$window" mousemove --window "$window" 670 462 click 1
     xdotool mousemove 1390 890
@@ -185,6 +190,117 @@ assert_disabled_cursor() {
   local window=$1 file=$2
   # Read the editor's status, not a different provider's list label.
   await_text "$window" "$file" '^[[:space:]]*Disabled[[:space:]]*$' '190x85+620+265'
+}
+
+# Read words from only the sidebar or the page body and convert the exact
+# phrase's Tesseract bounding box back to X11 client coordinates. This avoids
+# hard-coding row/button positions that differ between the two apps.
+settings_ocr() {
+  local file=$1 crop=$2 psm=$3
+  "${transform[@]}" "$file" -crop "$crop" +repage -resize 300% \
+    -colorspace gray -contrast-stretch 1%x1% png:- |
+    tesseract stdin stdout --psm "$psm" tsv 2>/dev/null
+}
+
+settings_phrase() {
+  local file=$1 crop=$2 phrase=$3 psm=${4:-11}
+  local roi_height roi_width x y
+  if [[ ! "$crop" =~ ^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$ ]]; then
+    return 1
+  fi
+  roi_width=${BASH_REMATCH[1]}; roi_height=${BASH_REMATCH[2]}
+  x=${BASH_REMATCH[3]}; y=${BASH_REMATCH[4]}
+  settings_ocr "$file" "$crop" "$psm" |
+    awk -F '\t' -v phrase="$phrase" -v x="$x" -v y="$y" -v w="$roi_width" -v h="$roi_height" '
+      BEGIN { n = split(tolower(phrase), want, " ") }
+      $1 == 5 && $11 >= 20 && $12 != "" {
+        key = $2 FS $3 FS $4 FS $5
+        if (key != line) { line = key; matched = 0 }
+        word = tolower($12)
+        gsub(/^[[:punct:]]+|[[:punct:]]+$/, "", word)
+        if (word == "") next
+        if (word != want[matched+1]) matched = 0
+        if (word != want[matched+1]) next
+        if (matched == 0) { left = $7; top = $8; bottom = $8 + $10 }
+        if ($8 < top) top = $8
+        if ($8 + $10 > bottom) bottom = $8 + $10
+        if (++matched == n) {
+          cx = (left + $7 + $9) / 6; cy = (top + bottom) / 6
+          if (!found && cx >= 0 && cx < w && cy >= 0 && cy < h) {
+            printf "%d %d\n", x + cx, y + cy
+            found = 1
+          }
+          matched = 0
+        }
+      }
+      END { if (!found) exit 1 }
+    '
+}
+
+wait_for_settings_view() {
+  local window=$1 file=$2 title=$3 heading=$4 tick header
+  # The breadcrumb and first section heading must both match in the same
+  # 1280×800 frame; the About sidebar label alone is not a route check.
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$file" || return 1
+    header=$(settings_phrase "$file" '410x45+288+42' "Settings $title" 7) || header=
+    if [[ -n "$header" ]] && settings_phrase "$file" '932x250+294+99' "$heading" >/dev/null; then
+      return 0
+    fi
+    sleep 0.4
+  done
+  return 1
+}
+
+click_settings_phrase() {
+  local window=$1 probe=$2 crop=$3 phrase=$4 scroll_x=$5 scroll_y=$6
+  local found cx cy tick
+  for ((tick=0; tick<7; tick++)); do
+    "${capture[@]}" -window "$window" "$probe" || return 1
+    if found=$(settings_phrase "$probe" "$crop" "$phrase"); then
+      read -r cx cy <<<"$found"
+      xdotool windowfocus "$window" mousemove --window "$window" "$cx" "$cy" click 1 || return 1
+      xdotool mousemove 1390 890 || return 1
+      return 0
+    fi
+    # Stop and preserve the final diagnostic rather than guessing a click.
+    (( tick < 6 )) || break
+    xdotool mousemove --window "$window" "$scroll_x" "$scroll_y" click --repeat 4 5 || return 1
+    xdotool mousemove 1390 890 || return 1
+    sleep 0.4
+  done
+  return 1
+}
+
+capture_about_settings() {
+  local window=$1 app=$2 probe="$tmp/$2-about-target.png"
+  local about="$out/$app-about-settings.png" notices="$out/$app-open-source-licenses.png"
+  local about_unverified="$out/$app-about-settings-unverified"
+  local notices_unverified="$out/$app-open-source-licenses-unverified"
+  local step='find About in the Settings sidebar'
+  touch "$about_unverified" "$notices_unverified"
+  if click_settings_phrase "$window" "$probe" '218x704+52+48' 'About' 180 700; then
+    step='verify the About breadcrumb and App section'
+    if wait_for_settings_view "$window" "$about" 'About' 'App'; then
+      rm -f -- "$about_unverified"
+      printf '%s: verified the native About route\n' "$app"
+      step='find the View licenses button on the About page'
+      if click_settings_phrase "$window" "$probe" '932x636+294+109' 'View licenses' 1120 700; then
+        step='verify the Open source licenses breadcrumb and Third-party notices heading'
+        if wait_for_settings_view "$window" "$notices" 'Open source licenses' 'Third-party notices'; then
+          rm -f -- "$notices_unverified"
+          printf '%s: verified the native Third-party notices route\n' "$app"
+          return 0
+        fi
+      fi
+    fi
+  fi
+  if [[ -f "$probe" ]]; then
+    cp -- "$probe" "$out/$app-about-target-unverified.png"
+  fi
+  printf '%s: optional About capture incomplete (could not %s); see unverified markers\n' \
+    "$app" "$step" >&2
+  return 0
 }
 
 assert_provider_gate() {
@@ -252,6 +368,24 @@ if [[ "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
       exit 1
     fi
     compare_frames t3-provider-settings butler-provider-settings provider-settings
+    printf '%s\n' \
+      'About and Third-party notices were attempted in the same fresh native profiles after the verified Providers route.' \
+      'Use provenance.txt for exact builds. A *-unverified marker means the corresponding PNG is diagnostic only.' \
+      'Butler only displays its three bundled notices, not T3 Code’s full dependency manifest.' \
+      >"$out/about-settings-capture-notes.txt"
+    for state in about-settings open-source-licenses; do
+      if [[ ! -e "$out/t3-$state-unverified" && ! -e "$out/butler-$state-unverified" &&
+            -f "$out/t3-$state.png" && -f "$out/butler-$state.png" ]]; then
+        if compare_frames "t3-$state" "butler-$state" "$state"; then
+          printf '%s: verified route pair (raw diagnostic diff; not a parity claim)\n' "$state" \
+            | tee -a "$out/about-settings-capture-notes.txt"
+          continue
+        fi
+        touch "$out/$state-pair-unverified"
+      fi
+      printf '%s: optional native route pair not verified\n' "$state" \
+        | tee -a "$out/about-settings-capture-notes.txt" >&2
+    done
   fi
 fi
 if [[ -e "$out/t3-landing-unverified" ]]; then

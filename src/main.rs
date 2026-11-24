@@ -642,6 +642,29 @@ mod ui_tests {
     }
 
     #[test]
+    fn dismisses_settings_only_after_a_click_on_the_backdrop() {
+        let tmp = Fixture::new();
+        let root = tmp.0.join("profile");
+        Profile::new(&root).complete_onboarding().unwrap();
+        let mut app = application(Some(root), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open provider settings").unwrap();
+            sim.click_at(Offset::new(1000.0, 685.0)).unwrap();
+            assert!(sim.focus("Back to workspace").is_ok());
+            sim.mouse().down(Offset::new(41.0, 100.0)).unwrap();
+            sim.mouse().up(Offset::new(39.0, 100.0)).unwrap();
+            assert!(sim.focus("Back to workspace").is_ok());
+            sim.mouse().down(Offset::new(39.0, 100.0)).unwrap();
+            sim.mouse().up(Offset::new(41.0, 100.0)).unwrap();
+            assert!(sim.focus("Back to workspace").is_ok());
+            sim.click_at(Offset::new(25.0, 100.0)).unwrap();
+            assert!(sim.focus("Back to workspace").is_err());
+            sim.focus("Open provider settings").unwrap();
+        });
+    }
+
+    #[test]
     fn opens_bundled_licenses_and_returns_to_the_same_provider() {
         let tmp = Fixture::new();
         let root = tmp.0.join("profile");

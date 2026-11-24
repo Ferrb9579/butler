@@ -10,7 +10,7 @@ use incular::{
     gestures::GestureCallbacks,
     prelude::*,
     widgets::{
-        BackdropFilter, GestureDetector, StackFit,
+        BackdropFilter, GestureDetector, HitTestBehavior, StackFit,
         internal::{ActionSurface, ExplicitSemantics},
     },
 };
@@ -330,29 +330,43 @@ pub fn overlay(
                     -12.0,
                 )]);
         }
-        Container::new()
-            .alignment(Alignment::CENTER)
-            .child(
-                Container::new()
-                    .width(g.width)
-                    .height(g.height)
-                    .decoration(decoration)
-                    .child(ClipRRect::new(radius, row)),
-            )
-            .into()
-    });
-    Stack::new(vec![
-        workspace,
-        BackdropFilter::new(
+        let box_position = Rect::from_origin_size(
+            Offset::new((width - g.width) / 2.0, (height - g.height) / 2.0),
+            Size::new(g.width, g.height),
+        );
+        let close_from_backdrop = go_back.clone();
+        let backdrop = GestureDetector::new(BackdropFilter::new(
             GaussianBlur::uniform(4.0),
             // index.css dialog-backdrop: background at 60% opacity, blur 4px.
             Container::new().color(Color::rgba(252, 252, 252, 153)),
+        ))
+        .behavior(HitTestBehavior::Opaque)
+        // A tap has to start on the backdrop. A release over the card does not close it.
+        .on_tap_up(move |tap| {
+            if !box_position.contains(tap.global_position) {
+                close_from_backdrop();
+            }
+        });
+        let panel = GestureDetector::new(
+            Container::new()
+                .width(g.width)
+                .height(g.height)
+                .decoration(decoration)
+                .child(ClipRRect::new(radius, row)),
         )
-        .into(),
-        modal.into(),
-    ])
-    .fit(StackFit::Expand)
-    .into()
+        .behavior(HitTestBehavior::Opaque);
+        Stack::new(vec![
+            workspace.clone(),
+            backdrop.into(),
+            Container::new()
+                .alignment(Alignment::CENTER)
+                .child(panel)
+                .into(),
+        ])
+        .fit(StackFit::Expand)
+        .into()
+    });
+    modal.into()
 }
 
 fn sidebar(compact: bool, active: Section, navigation: Navigation) -> Widget {
