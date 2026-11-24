@@ -30,3 +30,19 @@ v0.1.11; Butler `cf64dfd67d119ae00fe65bd8761f302525660cd2`). The raw diff is
 buttons, shifted spacing, and native window controls mean it is not parity.
 
 [welcome-run]: https://github.com/Ferrb9579/butler/actions/runs/45321949520
+
+## Providers after first-run setup (not yet at parity)
+
+- [T3 Code](t3/providers-fresh-light-1280x800.png) · [Butler](butler/providers-fresh-light-1280x800.png)
+- Both are unmodified 1280×800 native Linux X11 captures from a fresh profile
+  after skipping first-run setup and opening Providers from the gated draft.
+- [Native run 45354812510][providers-run]: T3 Code v0.1.11
+  (`59651c1761f6c63e9b6056839067066968e6a406`), Butler
+  `a88320d462a0a745ac7eabb9ea03388f06937c1b`. This Butler capture predates
+  the Inter font and provider switches.
+- Raw absolute error: 503,100 of 1,024,000 pixels differ (49.13%).
+  Cursor is selected in both. T3 shows its disabled Cursor and missing CLI
+  status for Codex and Claude; Butler shows offline placeholders in this build.
+  List/details layout, setup UI, typography, and chrome also still differ.
+
+[providers-run]: https://github.com/Ferrb9579/butler/actions/runs/45354812510

@@ -199,6 +199,14 @@ butler_rc=$?
 set -e
 compare_frames() {
   local first=$1 second=$2 stem=$3 rc=0
+  local frame dimensions
+  for frame in "$first" "$second"; do
+    dimensions=$("${identify[@]}" -format '%wx%h' "$out/$frame.png") || return 1
+    if [[ "$dimensions" != "${width}x${height}" ]]; then
+      printf '%s frame is %s, expected %sx%s\n' "$frame" "$dimensions" "$width" "$height" >&2
+      return 1
+    fi
+  done
   "${compare[@]}" -metric AE "$out/$first.png" "$out/$second.png" \
     "$out/$stem-diff.png" 2>"$out/$stem-differing-pixels.txt" || rc=$?
   if (( rc > 1 )); then
@@ -230,7 +238,11 @@ if [[ "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
   CAPTURE_PROFILE=butler capture_one butler-import "$butler"
   CAPTURE_PROFILE=butler capture_one butler-project-reopened "$butler"
   echo "Local project import and profile restart smoke test passed"
-  if [[ ! -e "$out/t3-provider-settings-unverified" && -f "$out/t3-provider-settings.png" && -f "$out/butler-provider-settings.png" ]]; then
+  if [[ "${CAPTURE_REFERENCE_LANDING:-0}" == 1 ]]; then
+    if [[ -e "$out/t3-provider-settings-unverified" || ! -f "$out/t3-provider-settings.png" || ! -f "$out/butler-provider-settings.png" ]]; then
+      echo "Could not verify both requested native Providers settings frames" >&2
+      exit 1
+    fi
     compare_frames t3-provider-settings butler-provider-settings provider-settings
   fi
 fi
