@@ -496,10 +496,8 @@ fn transcript(
             });
             if role == MessageSource::User {
                 user_message(body, lane_width, active)
-            } else if let Some(active) = active {
-                marked_message(body, assistant_message_style(), active).with_key(active.key)
             } else {
-                Widget::from(Text::new(body).style(assistant_message_style()))
+                assistant_message(body, active)
             }
         };
         messages.extend([
@@ -542,22 +540,40 @@ fn transcript(
 }
 
 const USER_MESSAGE_SURFACE: Color = Color::rgba(235, 235, 237, 255);
+const ASSISTANT_MESSAGE_INK: Color = Color::rgba(24, 24, 27, 230);
 
-fn assistant_message_style() -> TextStyle {
-    TextStyle::new()
-        .font_family("Liberation Sans")
+fn message_style(color: Color) -> TextStyle {
+    crate::typography::interface()
         .font_size(14.0)
-        .color(INK)
+        .line_height_absolute(22.75)
+        .font_weight(FontWeight::W400)
+        .color(color)
+}
+
+fn assistant_message(body: &str, active: Option<&Jump>) -> Widget {
+    // TimelineAssistantRows.tsx: px-1 py-0.5. The plain ChatMarkdown root
+    // uses the interface font, text-sm / leading-relaxed and 90% foreground
+    // at default contrast. No background on the assistant's message.
+    let style = message_style(ASSISTANT_MESSAGE_INK);
+    let child = match active {
+        Some(jump) => marked_message(body, style, jump),
+        None => Text::new(body).style(style).soft_wrap(true).into(),
+    };
+    let row: Widget = Container::new()
+        .padding(EdgeInsets::symmetric(4.0, 2.0))
+        .alignment(Alignment::CENTER_LEFT)
+        .child(child)
+        .into();
+    match active {
+        Some(jump) => row.with_key(jump.key),
+        None => row,
+    }
 }
 
 fn user_message(body: &str, lane_width: f32, active: Option<&Jump>) -> Widget {
     // Pinned TimelineUserMessageRow.tsx plain text path: max-w-[80%],
     // rounded-2xl, p-3 and bg-message. Folded/attachment variants are separate.
-    let style = crate::typography::interface()
-        .font_size(14.0)
-        .line_height_absolute(22.75)
-        .font_weight(FontWeight::W400)
-        .color(Color::rgba(24, 24, 27, 255));
+    let style = message_style(Color::rgba(24, 24, 27, 255));
     let child = match active {
         Some(jump) => marked_message(body, style, jump),
         None => Text::new(body).style(style).soft_wrap(true).into(),
@@ -658,6 +674,54 @@ fn saved_user_bubbles_fit_content_and_wrap_at_the_source_width() {
     assert!(long.height > short.height + 20.0, "{long:?}");
     assert!((short_position.x + short.width - lane).abs() < 1.0);
     assert!((long_position.x + long.width - lane).abs() < 1.0);
+}
+
+#[cfg(test)]
+#[test]
+fn saved_assistant_reply_paints_left_inset_and_relaxed_lines_without_a_bubble() {
+    use incular::core::Transform;
+    use incular::rendering::PaintCommand;
+    use incular::runtime::Runtime;
+
+    let row = assistant_message(&"Plain saved assistant response. ".repeat(5), None);
+    let root = Directionality::new(TextDirection::Ltr, Column::new([row]));
+    let mut runtime = Runtime::new(root.into()).unwrap();
+    let (display, _) = runtime
+        .run_frame(Constraints::tight(Size::new(150.0, 280.0)))
+        .unwrap();
+    let mut transforms = vec![Transform::IDENTITY];
+    let mut baselines = Vec::<f32>::new();
+    for command in display.commands() {
+        match command {
+            PaintCommand::PushTransform { transform } => {
+                transforms.push(transforms.last().unwrap().then(*transform));
+            }
+            PaintCommand::PopTransform => {
+                transforms.pop();
+            }
+            PaintCommand::RRect { .. } => panic!("assistant text must not paint a bubble"),
+            PaintCommand::GlyphRun { run, color } if *color == ASSISTANT_MESSAGE_INK => {
+                let origin = transforms.last().unwrap().transform_point(run.origin);
+                assert!((origin.x - 4.0).abs() < 1.0);
+                for glyph in run.glyphs.iter() {
+                    let y = transforms
+                        .last()
+                        .unwrap()
+                        .transform_point(run.origin + glyph.offset)
+                        .y;
+                    if !baselines.iter().any(|last| (*last - y).abs() < 0.1) {
+                        baselines.push(y);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(baselines.len() > 3, "{baselines:?}");
+    baselines.sort_by(f32::total_cmp);
+    for pair in baselines.windows(2) {
+        assert!((pair[1] - pair[0] - 22.75).abs() < 0.4, "{pair:?}");
+    }
 }
 
 fn find_bar(

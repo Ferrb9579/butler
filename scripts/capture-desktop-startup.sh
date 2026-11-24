@@ -1033,6 +1033,7 @@ verify_native_thread_find() {
     "Reference fixture SHA256: $fixture_sha" \
     'See provenance.txt for Butler commit. No provider setup, prompt submission, or Return key is used.' \
     'T3 opens the seeded thread with its bundled Playwright; both apps use real X11 pixels for verification and capture.' \
+    'When shown, the T3 provider status alert is closed with its normal per-session dismiss button.' \
     'Each verified frame shows the existing transcript and the matching query/count. Raw diffs are diagnostic, not pixel parity.' \
     >"$notes" || return 1
   for app in t3 butler; do

@@ -74,7 +74,7 @@ async function main() {
         .waitFor({ state: "visible", timeout: 10_000 })
         .catch(() => {}),
     ));
-    const summary = await page.evaluate(({ user, assistant }) => {
+    const readTranscript = () => page.evaluate(({ user, assistant }) => {
       const rows = [...document.querySelectorAll('[data-timeline-row-kind="message"]')];
       const geometry = (rect) => rect ? {
         x: Math.round(rect.x), y: Math.round(rect.y),
@@ -82,13 +82,42 @@ async function main() {
       } : null;
       const count = (id, phrase) => {
         const row = rows.find((element) => element.dataset.messageId === id);
-        if (!row) return { row: false, phrase: false, intersectsViewport: false, rect: null };
+        if (!row) return {
+          row: false, phrase: false, intersectsViewport: false, rect: null,
+          textRect: null, textTopHits: 0,
+        };
         const rect = row.getBoundingClientRect();
         const viewport = row.closest(".messages-timeline-scroll")?.getBoundingClientRect();
+        // Sample the actual phrase rather than the much larger timeline row.
+        // Both fixture messages are plain single text nodes in the Find body.
+        let textRect = null;
+        let textTopHits = 0;
+        const body = row.querySelector("[data-thread-find-text]");
+        if (body) {
+          const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+          for (let node; (node = walker.nextNode());) {
+            const start = node.textContent.indexOf(phrase);
+            if (start < 0) continue;
+            const range = document.createRange();
+            range.setStart(node, start);
+            range.setEnd(node, start + phrase.length);
+            const phraseRect = range.getClientRects()[0];
+            if (!phraseRect || phraseRect.width <= 0 || phraseRect.height <= 0) continue;
+            textRect = geometry(phraseRect);
+            const y = phraseRect.top + phraseRect.height * 0.25;
+            textTopHits = [0.2, 0.5, 0.8].filter((fraction) => {
+              const x = phraseRect.left + phraseRect.width * fraction;
+              return row.contains(document.elementFromPoint(x, y));
+            }).length;
+            break;
+          }
+        }
         return {
           row: true,
           phrase: row.innerText.includes(phrase),
           rect: geometry(rect),
+          textRect,
+          textTopHits,
           intersectsViewport:
             rect.width > 0 && rect.height > 0 &&
             rect.right > Math.max(0, viewport?.left ?? 0) &&
@@ -106,11 +135,29 @@ async function main() {
         assistant: count("launch-check-assistant", assistant),
       };
     }, { user, assistant });
+    stage = "provider-status-dismiss";
+    const status = page.locator('.chat-banner-lane [role="alert"]').filter({
+      has: page.getByText("Codex provider status", { exact: true }),
+    });
+    await status.waitFor({ state: "visible", timeout: 4_000 }).catch(() => {});
+    let bannerDismissed = false;
+    let beforeDismiss = null;
+    if (await status.isVisible()) {
+      const { user, assistant } = await readTranscript();
+      beforeDismiss = { user, assistant };
+      // This is the app's normal, non-persistent dismissal in this
+      // disposable profile. Never touch its provider settings or Refresh.
+      await status.getByRole("button", { name: "Dismiss Codex provider error", exact: true })
+        .click({ timeout: 4_000 });
+      await status.waitFor({ state: "hidden", timeout: 4_000 });
+      bannerDismissed = true;
+    }
+    const summary = await readTranscript();
     const nativeSize = await native.evaluate((window) => {
       const { width, height } = window.getBounds();
       return { width, height };
     });
-    const result = { stage: "complete", failures, nativeSize, ...summary };
+    const result = { stage: "complete", failures, nativeSize, bannerDismissed, beforeDismiss, ...summary };
     report(result);
     if (ready !== undefined) {
       if (nativeSize.width !== size.width || nativeSize.height !== size.height ||
