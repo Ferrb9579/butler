@@ -18,6 +18,11 @@ AppImage extraction, using FontTools 4.61.1, to verify every SVG and the
 Rust path module used by the desktop build. Omit `--check` to regenerate.
 The Rust geometry uses deterministic Bézier conversion for SVG arcs;
 it requires no SVG loader, third-party design system or network at runtime.
+The raw exports preserve Lucide's nominal 2-unit stroke. Butler applies the
+pinned T3 stylesheet's 1.75-unit display stroke to default Lucide icons,
+including SnapShots; T3's standalone submit arrow keeps its own 1.8-unit
+stroke in its 14px view box. A control with an explicit stroke in T3 should
+retain that override when it is ported.
 The assets alone do not implement the associated screens or behaviors.
 
 Butler retains its own product identity. Vendor and OS marks are not part

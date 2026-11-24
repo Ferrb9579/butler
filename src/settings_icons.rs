@@ -179,7 +179,9 @@ mod brand_tests {
 /// Resolve either a T3 settings row label or an original Lucide kebab-case name.
 /// Unrecognized names retain the requested layout footprint without a fallback glyph.
 pub fn icon(name: &str, size: f32, color: Color) -> Widget {
-    rendered_icon(name, size, color, 24.0, 2.0)
+    // T3 index.css sets svg.lucide[stroke-width="2"] to 1.75, including its
+    // createLucideIcon-based SnapShots glyph. The raw exports retain 2.
+    rendered_icon(name, size, color, 24.0, 1.75)
 }
 
 /// The reference uses a custom 14px stroke for the normal Submit state.
