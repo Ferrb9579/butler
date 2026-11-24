@@ -36,18 +36,19 @@ buttons, shifted spacing, and native window controls mean it is not parity.
 - [T3 Code](t3/providers-fresh-light-1280x800.png) · [Butler](butler/providers-fresh-light-1280x800.png)
 - Both are unmodified 1280×800 native Linux X11 captures from a fresh profile
   after skipping first-run setup and opening Providers from the gated draft.
-- [Native run 45359147124][providers-run]: T3 Code v0.1.11
+- [Native run 45360893581][providers-run]: T3 Code v0.1.11
   (`59651c1761f6c63e9b6056839067066968e6a406`), Butler
-  `fd023ed1022a6a3a66086c8604e420fb5c38949e`. This Butler capture includes
-  the Inter Variable face and enable switches, but predates the original
-  provider marks and responsive editor.
-- Raw absolute error: 502,584 of 1,024,000 pixels differ (49.08%).
+  `19ad912f07cfd6225060b41edfd81ee756822fa9`. This Butler capture includes
+  Inter Variable, enable switches, the original provider marks, and the
+  responsive editor rows. Name commit-on-blur landed afterward.
+- Raw absolute error: 501,810 of 1,024,000 pixels differ (49.00%).
   Cursor is selected and disabled in both. T3 shows missing CLI diagnostics
-  for Codex and Claude; Butler shows offline placeholders. List/details
-  layout, setup UI, font weights, and window chrome still differ.
-- [Previous native run 45354812510][providers-old] captured the same screen
-  at Butler `a88320d462a0a745ac7eabb9ea03388f06937c1b` before Inter and
-  the switches. The earlier PNGs are also in Git history.
+  for Codex and Claude; Butler shows offline placeholders. Setup UI, font
+  weights, row height in diagnostic states, and window chrome still differ.
+- [Run 45359147124][providers-inter] included Inter and the switches before
+  the marks and responsive editor. [Run 45354812510][providers-old] also
+  predates Inter and the switches. Both older pairs remain in Git history.
 
-[providers-run]: https://github.com/Ferrb9579/butler/actions/runs/45359147124
+[providers-run]: https://github.com/Ferrb9579/butler/actions/runs/45360893581
+[providers-inter]: https://github.com/Ferrb9579/butler/actions/runs/45359147124
 [providers-old]: https://github.com/Ferrb9579/butler/actions/runs/45354812510
