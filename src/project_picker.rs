@@ -217,7 +217,7 @@ pub fn overlay(
         let remote = remote.clone();
         let section = step.clone();
         let browse_home = home.clone();
-        palette_submit("Continue", "Continue (Enter)", enabled, move || {
+        palette_submit("Continue", "Continue (Enter)", true, enabled, move || {
             remote.continue_to_destination(&remote.url.text(), &section, browse_home.as_deref());
         })
     } else if current == Picker::CloneDestination {
@@ -227,8 +227,13 @@ pub fn overlay(
         let field = remote.destination.clone();
         let submit = submit.clone();
         palette_submit(
-            if creating { "Cloning" } else { "Clone" },
-            "Clone",
+            if creating {
+                "Cloning"
+            } else {
+                "Create & Clone"
+            },
+            "Create & Clone",
+            false,
             enabled,
             move || {
                 if let Some(remote) = pending.clone() {
@@ -644,7 +649,7 @@ pub fn overlay(
                     .height(96.0)
                     .alignment(Alignment::CENTER)
                     .child(label(
-                        "Paste a Git clone URL to continue.",
+                        "Enter a Git clone URL and press Enter to continue.",
                         14.0,
                         FontWeight::W400,
                         MUTED,
@@ -678,9 +683,14 @@ pub fn overlay(
                 28.0,
                 label("Select where to clone", 12.0, FontWeight::W500, MUTED),
             ));
+            let mut has_choices = false;
             if let Some(listing) = remote.browse.get() {
+                let at_home = home
+                    .as_ref()
+                    .and_then(|path| path.canonicalize().ok())
+                    .is_some_and(|root| root == listing.directory);
                 let mut choices = Vec::new();
-                if let Some(parent) = listing.directory.parent() {
+                if !at_home && let Some(parent) = listing.directory.parent() {
                     choices.push(remote.browse_action(
                         "Parent directory",
                         parent.to_owned(),
@@ -691,6 +701,7 @@ pub fn overlay(
                     choices.push(remote.browse_action(&name, path, creating));
                 }
                 if !choices.is_empty() {
+                    has_choices = true;
                     rows.push(
                         Container::new()
                             .height((choices.len() as f32 * 32.0).min(160.0))
@@ -706,15 +717,17 @@ pub fn overlay(
             if let Some(message) = remote.browse_error.get() {
                 rows.push(row(30.0, label(&message, 13.0, FontWeight::W400, MUTED)));
             }
-            rows.push(row(
-                48.0,
-                label(
-                    "Choose a destination path and select Clone.",
-                    14.0,
-                    FontWeight::W400,
-                    MUTED,
-                ),
-            ));
+            if !has_choices {
+                rows.push(row(
+                    48.0,
+                    label(
+                        "Choose a destination path and select Create & Clone.",
+                        14.0,
+                        FontWeight::W400,
+                        MUTED,
+                    ),
+                ));
+            }
             if let Some(error) = error {
                 rows.push(row(
                     30.0,
@@ -938,19 +951,31 @@ fn source(icon_text: &str, title: &str, description: &str, ready: bool) -> Widge
 fn palette_submit(
     text: &str,
     accessible: &str,
+    with_enter: bool,
     enabled: bool,
     click: impl Fn() + 'static,
 ) -> Widget {
-    Button::with_child(accessible, label(text, 12.0, FontWeight::W500, INK))
-        .style(
-            ButtonStyle::new()
-                .variant(ButtonVariant::Outline)
-                .height(24.0)
-                .padding(EdgeInsets::symmetric(7.0, 0.0)),
-        )
-        .enabled(enabled)
-        .on_click(click)
-        .into()
+    let mut children = vec![label(text, 12.0, FontWeight::W500, INK)];
+    if with_enter {
+        children.push(shortcut_key("Enter"));
+    }
+    Button::with_child(
+        accessible,
+        Row::new(children)
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .spacing(4.0)
+            .into(),
+    )
+    .style(
+        ButtonStyle::new()
+            .variant(ButtonVariant::Outline)
+            .height(24.0)
+            .padding(EdgeInsets::symmetric(7.0, 0.0)),
+    )
+    .enabled(enabled)
+    .on_click(click)
+    .into()
 }
 
 fn shortcut_key(text: &str) -> Widget {

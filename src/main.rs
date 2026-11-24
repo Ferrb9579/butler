@@ -848,7 +848,7 @@ mod ui_tests {
                     .unwrap()
                     .is_empty()
             );
-            sim.click("Clone").unwrap();
+            sim.click("Create & Clone").unwrap();
             for _ in 0..100 {
                 if sim.focus("Open provider settings").is_ok() {
                     return;
@@ -891,7 +891,7 @@ mod ui_tests {
             sim.focus("Enter Git clone URL").unwrap();
             sim.type_text("ButlerFixture/Failure").unwrap();
             sim.press("Enter".parse().unwrap()).unwrap();
-            sim.click("Clone").unwrap();
+            sim.click("Create & Clone").unwrap();
             for _ in 0..100 {
                 if sim
                     .click("Could not clone project: Offline fixture checkout failed.")

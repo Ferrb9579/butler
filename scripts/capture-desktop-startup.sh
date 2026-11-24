@@ -530,6 +530,26 @@ project_literal() {
   sed 's/[[:space:]]//g' <<<"$recognized" | grep -Fxq -- "$expected"
 }
 
+git_destination_frame() {
+  local app=$1 frame=$2 destination=$3 remote=$4
+  # Measured on both native destination frames from run 45372807801. The
+  # wide palette crop confused single-line OCR with borders, and its left
+  # edge clipped the Repository heading. Read each row on its own instead.
+  local remote_crop='345x22+390+177' browse_crop='180x21+363+204' action='Clone'
+  if [[ "$app" == t3 ]]; then
+    remote_crop='345x22+390+189'
+    browse_crop='180x21+363+224'
+    # A vacant path shows Create & Clone in pinned T3 (and its Enter
+    # shortcut badge); Butler's review button is simply Clone.
+    action='Create&CloneEnter'
+  fi
+  project_literal "$frame" '132x26+390+92' "$destination" 7 &&
+    project_literal "$frame" '153x33+768+89' "$action" 7 &&
+    project_literal "$frame" '120x30+363+131' 'Repository' 7 &&
+    project_literal "$frame" "$remote_crop" "$remote" 7 &&
+    project_literal "$frame" "$browse_crop" 'Selectwheretoclone' 7
+}
+
 capture_git_url_review() {
   local window=$1 app=$2 runtime=$3 tick coords x y
   local url_input='ButlerFixture/CaseRepo'
@@ -539,7 +559,6 @@ capture_git_url_review() {
   # Both existing New project native frames use this input row. Limit clicks
   # to the expected controls and their respective halves of the palette.
   local input_crop='395x40+389+84' submit_crop='134x42+791+83'
-  local summary_crop='530x132+375+124' browse_crop='540x208+365+157'
   if [[ "$app" == t3 ]]; then
     click_project_control "$window" "$prefix-welcome.png" \
       '240x42+270+601' 'Start without an agent' 7 || return 1
@@ -582,12 +601,7 @@ capture_git_url_review() {
   for ((tick=0; tick<15; tick++)); do
     local frame="$prefix-destination.png"
     "${capture[@]}" -window "$window" "$frame" || return 1
-    if project_literal "$frame" "$input_crop" "$destination" 7 &&
-       settings_phrase "$frame" "$submit_crop" 'Clone' 7 >/dev/null &&
-       settings_phrase "$frame" "$summary_crop" 'Repository' 11 >/dev/null &&
-       (project_literal "$frame" "$summary_crop" "$remote" 11 ||
-        project_literal "$frame" "$summary_crop" "$remote" 6) &&
-       settings_phrase "$frame" "$browse_crop" 'Select where to clone' 11 >/dev/null; then
+    if git_destination_frame "$app" "$frame" "$destination" "$remote"; then
       break
     fi
     sleep 0.4
