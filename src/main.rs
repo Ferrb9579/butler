@@ -9,17 +9,20 @@ mod welcome;
 mod workspace;
 
 use butler::{
+    clone_runner,
+    clone_stage::{CloneDestination, CloneWorkspace},
     landing::{Landing, resolve_landing},
     managed_projects,
     onboarding::{Route, StartupEvidence},
     profile::Profile,
     projects::{FolderListing, LocalProject, LocalProjects},
+    remote_projects::{self, RemoteProject},
     threads::{Conversation, ThreadStore, Workspace},
 };
 use incular::prelude::*;
-use project_picker::{Picker, ProjectRequest};
+use project_picker::{Picker, ProjectRequest, RemoteFlow};
 use std::{
-    cell::Cell,
+    cell::RefCell,
     env,
     path::{Path, PathBuf},
     rc::Rc,
@@ -30,10 +33,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+type CloneTransport = fn(&str, &CloneWorkspace) -> std::io::Result<()>;
+
+#[derive(Clone, Copy)]
+enum ProjectAction {
+    Open,
+    Create,
+    Clone,
+}
+
+enum ProjectWork {
+    Create(String),
+    Clone {
+        remote: RemoteProject,
+        destination: CloneDestination,
+    },
+}
+
 fn application(
     state: Option<PathBuf>,
     home: Option<PathBuf>,
     device: String,
+) -> Result<Application, Box<dyn std::error::Error>> {
+    application_with_transport(state, home, device, clone_runner::clone_https)
+}
+
+fn application_with_transport(
+    state: Option<PathBuf>,
+    home: Option<PathBuf>,
+    device: String,
+    clone_transport: CloneTransport,
 ) -> Result<Application, Box<dyn std::error::Error>> {
     typography::register();
     let settings_open = Signal::new(false);
@@ -82,8 +111,9 @@ fn application(
     let path = TextEditingController::new();
     let new_project_name = TextEditingController::new();
     let new_project_preview = Signal::new(String::new());
-    let pending_project_name = Signal::new(None::<String>);
-    let create_started = Rc::new(Cell::new(false));
+    let remote_flow = RemoteFlow::new();
+    let project_busy = Signal::new(false);
+    let queued_project = Rc::new(RefCell::new(None::<ProjectWork>));
     let completed = profile
         .as_ref()
         .map(Profile::onboarding_completed)
@@ -238,6 +268,7 @@ fn application(
                     _ => unreachable!("no projects are loaded in the current local workspace"),
                 }
             };
+            let active_root = active_project.get().map(|project| project.root.clone());
             let active_project = active_project.clone();
             let step = picker.clone();
             let error = picker_error.clone();
@@ -249,7 +280,7 @@ fn application(
             #[cfg(test)]
             let fixture_for_project = fixture.clone();
             let finish_project = move |result: std::io::Result<(LocalProject, Option<String>)>,
-                                       creating: bool| {
+                                       action: ProjectAction| {
                 match result {
                     Ok((project, warning)) => {
                         error.set(None);
@@ -278,45 +309,61 @@ fn application(
                         step.set(Picker::Closed);
                     }
                     Err(e) => {
-                        error.set(Some(if creating {
-                            format!("Could not create project: {e}")
-                        } else {
-                            format!("Could not open folder: {e}")
-                        }));
+                        let label = match action {
+                            ProjectAction::Open => "Could not open folder",
+                            ProjectAction::Create => "Could not create project",
+                            ProjectAction::Clone => "Could not clone project",
+                        };
+                        error.set(Some(format!("{label}: {e}")));
                     }
                 }
             };
-            let queued_creation = pending_project_name.get();
-            let creating = queued_creation.is_some();
-            if let Some(name) = queued_creation
-                && !create_started.replace(true)
-            {
+            let creating = project_busy.get();
+            if creating && let Some(job) = queued_project.borrow_mut().take() {
                 let store = projects.clone();
-                let pending = pending_project_name.clone();
-                let started = create_started.clone();
+                let busy = project_busy.clone();
                 let finish = finish_project.clone();
+                let action = match &job {
+                    ProjectWork::Create(_) => ProjectAction::Create,
+                    ProjectWork::Clone { .. } => ProjectAction::Clone,
+                };
                 cx.spawn_blocking(
-                    move || register_managed_project(store.as_ref(), &name),
+                    move || match job {
+                        ProjectWork::Create(name) => {
+                            register_managed_project(store.as_ref(), &name)
+                        }
+                        ProjectWork::Clone {
+                            remote,
+                            destination,
+                        } => register_cloned_project(
+                            store.as_ref(),
+                            &remote,
+                            destination,
+                            clone_transport,
+                        ),
+                    },
                     move |result, _| {
-                        started.set(false);
-                        pending.set(None);
+                        busy.set(false);
                         finish(
                             result.unwrap_or_else(|error| {
                                 Err(std::io::Error::other(format!("{error:?}")))
                             }),
-                            true,
+                            action,
                         );
                     },
                 );
             }
-            let pending = pending_project_name.clone();
+            let pending = project_busy.clone();
+            let work = queued_project.clone();
             let clear_error = picker_error.clone();
+            let home_for_clone = home.clone();
             let desktop = project_picker::overlay(
                 workspace,
                 picker.clone(),
                 path.clone(),
                 new_project_name.clone(),
                 new_project_preview.clone(),
+                remote_flow.clone(),
                 projects.as_ref().map(|store| store.data_dir().to_owned()),
                 creating,
                 home.clone(),
@@ -324,13 +371,38 @@ fn application(
                 browse_error.clone(),
                 picker_error.get(),
                 move |request| {
-                    if pending.get().is_some() {
+                    if pending.get() {
                         return;
                     }
                     match request {
                         ProjectRequest::Create(name) => {
                             clear_error.set(None);
-                            pending.set(Some(name));
+                            *work.borrow_mut() = Some(ProjectWork::Create(name));
+                            pending.set(true);
+                        }
+                        ProjectRequest::Clone {
+                            remote,
+                            destination,
+                        } => {
+                            let result = confirm_clone_destination(
+                                projects.as_ref(),
+                                &destination,
+                                home_for_clone.as_deref(),
+                                active_root.as_deref(),
+                            );
+                            match result {
+                                Ok(destination) => {
+                                    clear_error.set(None);
+                                    *work.borrow_mut() = Some(ProjectWork::Clone {
+                                        remote,
+                                        destination,
+                                    });
+                                    pending.set(true);
+                                }
+                                Err(error) => {
+                                    finish_project(Err(error), ProjectAction::Clone);
+                                }
+                            }
                         }
                         ProjectRequest::Open(input) => {
                             let result = projects
@@ -342,7 +414,7 @@ fn application(
                                 })
                                 .and_then(|store| store.open(Path::new(&input)))
                                 .map(|project| (project, None));
-                            finish_project(result, false);
+                            finish_project(result, ProjectAction::Open);
                         }
                     }
                 },
@@ -389,6 +461,42 @@ fn register_managed_project(
             )
         })?;
     Ok((project, created.warning))
+}
+
+fn confirm_clone_destination(
+    store: Option<&LocalProjects>,
+    input: &str,
+    home: Option<&Path>,
+    active: Option<&Path>,
+) -> std::io::Result<CloneDestination> {
+    let store =
+        store.ok_or_else(|| std::io::Error::other("No local profile directory is available."))?;
+    let target = remote_projects::resolve_destination(input, home, active)?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| std::io::Error::other("Choose a project directory."))?;
+    let name = target
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("Choose a project folder name."))?;
+    CloneDestination::confirmable(parent, name, store.data_dir())
+}
+
+fn register_cloned_project(
+    store: Option<&LocalProjects>,
+    remote: &RemoteProject,
+    destination: CloneDestination,
+    clone_transport: CloneTransport,
+) -> std::io::Result<(LocalProject, Option<String>)> {
+    let store =
+        store.ok_or_else(|| std::io::Error::other("No local profile directory is available."))?;
+    let root = destination.commit(|workspace| clone_transport(&remote.url, workspace))?;
+    let project = store.open(&root).map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            "The checkout is on disk, but Butler could not register the project.",
+        )
+    })?;
+    Ok((project, None))
 }
 
 fn local_home() -> Option<PathBuf> {
@@ -643,6 +751,109 @@ mod ui_tests {
         interact(&mut reopened, |sim| {
             sim.focus("Open provider settings").unwrap();
         });
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn git_url_requires_second_confirmation_and_registers_only_completed_checkout() {
+        fn offline_checkout(url: &str, workspace: &CloneWorkspace) -> std::io::Result<()> {
+            assert_eq!(url, "https://github.com/ButlerFixture/CaseRepo.git");
+            let checkout = workspace.path();
+            fs::create_dir(checkout.join(".git"))?;
+            fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/main\n")?;
+            fs::write(checkout.join("README.md"), "Offline checkout fixture\n")
+        }
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        Profile::new(&state).complete_onboarding().unwrap();
+        let repo = tmp.0.join("CaseRepo");
+        let repo_before_confirm = repo.clone();
+        let state_before_confirm = state.clone();
+        let mut app = application_with_transport(
+            Some(state.clone()),
+            Some(tmp.0.clone()),
+            "Fixture".into(),
+            offline_checkout,
+        )
+        .unwrap();
+        interact(&mut app, move |sim| {
+            sim.click("＋ Add project").unwrap();
+            sim.click("Git URL").unwrap();
+            sim.focus("Enter Git clone URL").unwrap();
+            sim.type_text("ButlerFixture/CaseRepo").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.focus("Enter path (e.g. ~/projects/my-app)").unwrap();
+            assert!(!repo_before_confirm.exists());
+            assert!(
+                LocalProjects::new(&state_before_confirm)
+                    .list()
+                    .unwrap()
+                    .is_empty()
+            );
+            sim.click("Clone").unwrap();
+            for _ in 0..100 {
+                if sim.focus("Open provider settings").is_ok() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            panic!("checkout did not activate");
+        });
+        let projects = LocalProjects::new(&state).list().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].title(), "CaseRepo");
+        assert_eq!(projects[0].root, repo.canonicalize().unwrap());
+        assert_eq!(
+            fs::read_to_string(repo.join("README.md")).unwrap(),
+            "Offline checkout fixture\n"
+        );
+        assert!(repo.join(".git/HEAD").is_file());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn failed_git_url_checkout_leaves_destination_and_registry_untouched() {
+        fn offline_failure(_: &str, workspace: &CloneWorkspace) -> std::io::Result<()> {
+            fs::write(workspace.path().join("partial"), b"incomplete")?;
+            Err(std::io::Error::other("Offline fixture checkout failed."))
+        }
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        Profile::new(&state).complete_onboarding().unwrap();
+        let mut app = application_with_transport(
+            Some(state.clone()),
+            Some(tmp.0.clone()),
+            "Fixture".into(),
+            offline_failure,
+        )
+        .unwrap();
+        interact(&mut app, |sim| {
+            sim.click("＋ Add project").unwrap();
+            sim.click("Git URL").unwrap();
+            sim.focus("Enter Git clone URL").unwrap();
+            sim.type_text("ButlerFixture/Failure").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.click("Clone").unwrap();
+            for _ in 0..100 {
+                if sim
+                    .click("Could not clone project: Offline fixture checkout failed.")
+                    .is_ok()
+                {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            panic!("checkout failure was not reported");
+        });
+        assert!(!tmp.0.join("Failure").exists());
+        assert!(LocalProjects::new(state).list().unwrap().is_empty());
+        assert!(fs::read_dir(&tmp.0).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".butler-clone-")
+        }));
     }
 
     #[test]

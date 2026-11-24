@@ -8,7 +8,11 @@ use incular::{
     widgets::{BackdropFilter, GestureDetector, internal::ActionSurface},
 };
 
-use butler::{managed_projects, projects::FolderListing};
+use butler::{
+    clone_runner, managed_projects,
+    projects::FolderListing,
+    remote_projects::{self, RemoteProject},
+};
 use std::{path::PathBuf, rc::Rc};
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, label, space};
@@ -19,11 +23,74 @@ pub enum Picker {
     Sources,
     Local,
     New,
+    RemoteUrl,
+    CloneDestination,
 }
 
 pub enum ProjectRequest {
     Open(String),
     Create(String),
+    Clone {
+        remote: RemoteProject,
+        destination: String,
+    },
+}
+
+#[derive(Clone)]
+pub struct RemoteFlow {
+    url: TextEditingController,
+    url_text: Signal<String>,
+    destination: TextEditingController,
+    destination_text: Signal<String>,
+    candidate: Signal<Option<RemoteProject>>,
+    error: Signal<Option<String>>,
+}
+
+impl RemoteFlow {
+    pub fn new() -> Self {
+        Self {
+            url: TextEditingController::new(),
+            url_text: Signal::new(String::new()),
+            destination: TextEditingController::new(),
+            destination_text: Signal::new(String::new()),
+            candidate: Signal::new(None),
+            error: Signal::new(None),
+        }
+    }
+
+    fn reset(&self) {
+        self.url.clear();
+        self.url_text.set(String::new());
+        self.destination.clear();
+        self.destination_text.set(String::new());
+        self.candidate.set(None);
+        self.error.set(None);
+    }
+
+    fn continue_to_destination(&self, input: &str, step: &Signal<Picker>) {
+        let result = remote_projects::parse(input).and_then(|candidate| {
+            clone_runner::validate_url(&candidate.url)?;
+            Ok(candidate)
+        });
+        match result {
+            Ok(candidate) => {
+                let suggestion = candidate.suggested_destination();
+                self.set_destination(suggestion);
+                self.candidate.set(Some(candidate));
+                self.error.set(None);
+                step.set(Picker::CloneDestination);
+            }
+            Err(error) => {
+                self.candidate.set(None);
+                self.error.set(Some(error.to_string()));
+            }
+        }
+    }
+
+    fn set_destination(&self, value: String) {
+        self.destination.set_text(value.clone());
+        self.destination_text.set(value);
+    }
 }
 
 pub fn overlay(
@@ -32,6 +99,7 @@ pub fn overlay(
     path: TextEditingController,
     new_name: TextEditingController,
     name_preview: Signal<String>,
+    remote: RemoteFlow,
     project_data: Option<PathBuf>,
     creating: bool,
     home: Option<PathBuf>,
@@ -48,7 +116,33 @@ pub fn overlay(
     let close = step.clone();
     let shortcut_step = step.clone();
     let shortcut_edit = new_name.clone();
-    let header_create: Widget = if current == Picker::New {
+    let header_create: Widget = if current == Picker::RemoteUrl {
+        let enabled = !remote.url_text.get().trim().is_empty();
+        let remote = remote.clone();
+        let section = step.clone();
+        palette_submit("Continue", "Continue (Enter)", enabled, move || {
+            remote.continue_to_destination(&remote.url.text(), &section);
+        })
+    } else if current == Picker::CloneDestination {
+        let pending = remote.candidate.get();
+        let enabled =
+            !creating && pending.is_some() && !remote.destination_text.get().trim().is_empty();
+        let field = remote.destination.clone();
+        let submit = submit.clone();
+        palette_submit(
+            if creating { "Cloning" } else { "Clone" },
+            "Clone",
+            enabled,
+            move || {
+                if let Some(remote) = pending.clone() {
+                    submit(ProjectRequest::Clone {
+                        remote,
+                        destination: field.text(),
+                    });
+                }
+            },
+        )
+    } else if current == Picker::New {
         let name = name_preview.get();
         let allow_create = !creating
             && project_data
@@ -105,15 +199,56 @@ pub fn overlay(
                     if creating {
                         return;
                     }
-                    back.set(if matches!(current, Picker::Local | Picker::New) {
-                        Picker::Sources
-                    } else {
-                        Picker::Closed
-                    });
+                    back.set(
+                        if matches!(
+                            current,
+                            Picker::Local
+                                | Picker::New
+                                | Picker::RemoteUrl
+                                | Picker::CloneDestination
+                        ) {
+                            Picker::Sources
+                        } else {
+                            Picker::Closed
+                        },
+                    );
                 })
                 .into(),
             Widget::from(SizedBox::new().width(8.0)),
-            if current == Picker::New {
+            if current == Picker::RemoteUrl {
+                let edit = remote.clone();
+                let review = remote.clone();
+                let step = step.clone();
+                Expanded::new(
+                    EditableText::new(remote.url.clone())
+                        .placeholder("Enter Git clone URL")
+                        .placeholder_color(MUTED)
+                        .style(crate::typography::interface().font_size(15.0).color(INK))
+                        .on_changed(move |value| {
+                            edit.url_text.set(value.to_owned());
+                            edit.error.set(None);
+                        })
+                        .on_submit(move |value| {
+                            if !value.trim().is_empty() {
+                                review.continue_to_destination(&value, &step);
+                            }
+                        }),
+                )
+                .into()
+            } else if current == Picker::CloneDestination {
+                let edit = remote.clone();
+                Expanded::new(
+                    EditableText::new(remote.destination.clone())
+                        .placeholder("Enter path (e.g. ~/projects/my-app)")
+                        .placeholder_color(MUTED)
+                        .read_only(creating)
+                        .style(crate::typography::interface().font_size(15.0).color(INK))
+                        .on_changed(move |value| {
+                            edit.destination_text.set(value.to_owned());
+                        }),
+                )
+                .into()
+            } else if current == Picker::New {
                 let preview = name_preview.clone();
                 let submit = submit.clone();
                 Expanded::new(
@@ -194,6 +329,7 @@ pub fn overlay(
                 .on_press({
                     let browse = browse.clone();
                     let browse_error = browse_error.clone();
+                    let step = step.clone();
                     move || {
                         browse.set(None);
                         browse_error.set(None);
@@ -205,10 +341,32 @@ pub fn overlay(
                 })
                 .into(),
             );
-            rows.push(row(
+            let git_source = row(
                 48.0,
-                source("↗", "Git URL", "Clone from a remote URL", false),
-            ));
+                source(
+                    "↗",
+                    "Git URL",
+                    "Clone from a remote URL",
+                    project_data.is_some(),
+                ),
+            );
+            if project_data.is_some() && cfg!(any(target_os = "linux", target_os = "macos")) {
+                let remote = remote.clone();
+                let git_step = step.clone();
+                rows.push(
+                    ActionSurface::with_child(git_source)
+                        .label("Git URL")
+                        .size(Size::new(574.0, 48.0))
+                        .hover_color(Color::rgba(241, 241, 244, 255))
+                        .on_press(move || {
+                            remote.reset();
+                            git_step.set(Picker::RemoteUrl);
+                        })
+                        .into(),
+                );
+            } else {
+                rows.push(git_source);
+            }
             rows.push(row(
                 48.0,
                 source("◉", "GitHub repository", "Clone GitHub owner/repo", false),
@@ -347,6 +505,67 @@ pub fn overlay(
                     30.0,
                     label(
                         &message,
+                        13.0,
+                        FontWeight::W400,
+                        Color::rgba(161, 38, 38, 255),
+                    ),
+                ));
+            }
+        }
+        Picker::RemoteUrl => {
+            rows.push(
+                Container::new()
+                    .height(96.0)
+                    .alignment(Alignment::CENTER)
+                    .child(label(
+                        "Paste a Git clone URL to continue.",
+                        14.0,
+                        FontWeight::W400,
+                        MUTED,
+                    ))
+                    .into(),
+            );
+            if let Some(error) = remote.error.get() {
+                rows.push(row(
+                    30.0,
+                    label(
+                        &error,
+                        13.0,
+                        FontWeight::W400,
+                        Color::rgba(161, 38, 38, 255),
+                    ),
+                ));
+            }
+        }
+        Picker::CloneDestination => {
+            if let Some(candidate) = remote.candidate.get() {
+                rows.push(row(
+                    24.0,
+                    label("Repository", 12.0, FontWeight::W500, MUTED),
+                ));
+                rows.push(row(
+                    48.0,
+                    source("↗", &candidate.input, &candidate.url, true),
+                ));
+            }
+            rows.push(row(
+                28.0,
+                label("Select where to clone", 12.0, FontWeight::W500, MUTED),
+            ));
+            rows.push(row(
+                48.0,
+                label(
+                    "Choose a destination path and select Clone.",
+                    14.0,
+                    FontWeight::W400,
+                    MUTED,
+                ),
+            ));
+            if let Some(error) = error {
+                rows.push(row(
+                    30.0,
+                    label(
+                        &error,
                         13.0,
                         FontWeight::W400,
                         Color::rgba(161, 38, 38, 255),
@@ -500,6 +719,24 @@ fn source(icon_text: &str, title: &str, description: &str, ready: bool) -> Widge
     }
     Row::new(items)
         .cross_axis_alignment(CrossAxisAlignment::Center)
+        .into()
+}
+
+fn palette_submit(
+    text: &str,
+    accessible: &str,
+    enabled: bool,
+    click: impl Fn() + 'static,
+) -> Widget {
+    Button::with_child(accessible, label(text, 12.0, FontWeight::W500, INK))
+        .style(
+            ButtonStyle::new()
+                .variant(ButtonVariant::Outline)
+                .height(24.0)
+                .padding(EdgeInsets::symmetric(7.0, 0.0)),
+        )
+        .enabled(enabled)
+        .on_click(click)
         .into()
 }
 

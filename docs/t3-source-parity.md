@@ -110,3 +110,13 @@ The project palette reads the pinned `CommandPaletteContent.tsx:94–126`
 footer and `CommandPalette.tsx` key handling for the implemented Enter,
 empty-name Backspace and Escape actions. The focused editor can use these
 shortcuts. Autofocus and arrow-driven result navigation are not ported.
+
+Git URL now opens the review step from the pinned `CommandPalette.tsx`
+at lines 2191–2231 before any Git request. It shows a normalized Repository
+summary and an editable case-preserving destination. This first safe path
+accepts only default-port public GitHub/GitLab HTTPS with a trusted system
+Git, requires an existing owned destination parent and an explicit Clone
+activation, and registers only a completed no-replace checkout. That
+registration order intentionally differs from T3's provisional registry.
+Folder browsing, Create & Clone, SSH/authenticated hosts, cancellation,
+and UI shortcuts beyond the implemented controls remain open.
