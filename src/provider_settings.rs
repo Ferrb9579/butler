@@ -1,5 +1,6 @@
 //! Local provider settings overlay. The canned provider is available to tests only.
 
+use crate::about_settings;
 use crate::empty_workspace::{WHITE, space};
 use crate::settings_icons::{icon, provider_brand};
 use crate::typography;
@@ -204,14 +205,67 @@ impl Names {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Section {
+    Providers,
+    About,
+    Licenses,
+}
+
+impl Section {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Providers => "Providers",
+            Self::About => "About",
+            Self::Licenses => "Open source licenses",
+        }
+    }
+
+    fn sidebar(self) -> Self {
+        match self {
+            Self::Licenses => Self::About,
+            other => other,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Navigation {
+    section: Signal<Section>,
+    expanded: Signal<Option<usize>>,
+}
+
+impl Navigation {
+    pub fn new() -> Self {
+        Self {
+            section: Signal::new(Section::Providers),
+            expanded: Signal::new(None),
+        }
+    }
+
+    pub fn open_providers(&self) {
+        self.navigate(Section::Providers);
+    }
+
+    fn navigate(&self, section: Section) {
+        if self.section.get() != section {
+            self.expanded.set(None);
+            self.section.set(section);
+        }
+    }
+}
+
 pub fn overlay(
     workspace: Widget,
     device: &str,
+    navigation: Navigation,
     provider_selection: Signal<usize>,
     names: Names,
     go_back: impl Fn() + Clone + 'static,
     #[cfg(test)] fixture_enabled: Signal<bool>,
 ) -> Widget {
+    let section = navigation.section.get();
+    let expanded = navigation.expanded.get();
     let selected = provider_selection.get();
     let saved = names.committed.get();
     let enabled = names.enabled.get();
@@ -222,24 +276,41 @@ pub fn overlay(
         let height = constraints.max_height();
         let g = modal_geometry(width, height);
         let layout = provider_geometry(width, height, g.width);
+        let compact = width < 640.0;
         let first = Container::new()
             .width(layout.sidebar - 1.0)
             .color(SIDEBAR)
-            .child(SingleChildScrollView::new(sidebar(layout.sidebar == 56.0)));
-        let detail = details(
-            &device,
-            &layout,
-            width < 640.0,
-            selected,
-            provider_selection.clone(),
-            names.clone(),
-            &saved,
-            enabled,
-            name_error.as_deref(),
-            go_back.clone(),
-            #[cfg(test)]
-            fixture_enabled.clone(),
-        );
+            .child(SingleChildScrollView::new(sidebar(
+                layout.sidebar == 56.0,
+                section,
+                navigation.clone(),
+            )));
+        let body = match section {
+            Section::Providers => details(
+                &device,
+                &layout,
+                compact,
+                selected,
+                provider_selection.clone(),
+                names.clone(),
+                &saved,
+                enabled,
+                name_error.as_deref(),
+                #[cfg(test)]
+                fixture_enabled.clone(),
+            ),
+            Section::About => {
+                let nav = navigation.clone();
+                about_settings::about(compact, move || nav.navigate(Section::Licenses))
+            }
+            Section::Licenses => {
+                let nav = navigation.clone();
+                about_settings::licenses(compact, expanded, move |value| {
+                    nav.expanded.set(value);
+                })
+            }
+        };
+        let detail = settings_page(&layout, section, compact, body, go_back.clone());
         let row = Row::new(vec![
             Widget::from(first),
             Container::new().width(1.0).color(RULE).into(),
@@ -284,7 +355,7 @@ pub fn overlay(
     .into()
 }
 
-fn sidebar(compact: bool) -> Widget {
+fn sidebar(compact: bool, active: Section, navigation: Navigation) -> Widget {
     let mut rows = vec![nav("Search", false, compact), space(8.0)];
     for (heading, section) in [
         (
@@ -314,12 +385,13 @@ fn sidebar(compact: bool) -> Widget {
             &["Projects", "Source control & issues", "Worktrees"][..],
         ),
         ("Connections", &["Environments", "Sharing & access"][..]),
+        ("More", &["Maintenance", "Labs", "About", "Archive"][..]),
     ] {
         if !heading.is_empty() {
             rows.push(space(16.0));
             if compact {
                 rows.extend([Container::new().height(1.0).color(RULE).into(), space(16.0)]);
-            } else {
+            } else if heading != "More" {
                 rows.push(
                     Container::new()
                         .height(16.0)
@@ -335,7 +407,43 @@ fn sidebar(compact: bool) -> Widget {
             if index > 0 {
                 rows.push(space(4.0));
             }
-            rows.push(nav(item, *item == "Providers", compact));
+            let destination = match *item {
+                "Providers" => Some(Section::Providers),
+                "About" => Some(Section::About),
+                _ => None,
+            };
+            let selected = destination.is_some_and(|section| section == active.sidebar());
+            let content = nav(item, selected, compact);
+            if let Some(destination) = destination {
+                let nav = navigation.clone();
+                rows.push(
+                    Widget::from(
+                        ActionSurface::with_child(content)
+                            .label(*item)
+                            .size(Size::new(0.0, 32.0))
+                            .mouse_cursor(incular::widgets::MouseCursor::Click)
+                            .hover_color(if selected {
+                                Color::TRANSPARENT
+                            } else {
+                                LIST_HOVER
+                            })
+                            .on_press(move || nav.navigate(destination)),
+                    )
+                    .semantics(
+                        ExplicitSemantics::new(SemanticRole::Button)
+                            .label(*item)
+                            .state(SemanticState {
+                                enabled: true,
+                                focusable: true,
+                                selected,
+                                ..SemanticState::default()
+                            })
+                            .actions([SemanticActionKind::Focus, SemanticActionKind::Activate]),
+                    ),
+                );
+            } else {
+                rows.push(content);
+            }
         }
     }
     Container::new()
@@ -386,7 +494,7 @@ fn nav(text: &str, selected: bool, compact: bool) -> Widget {
         })
         .decoration(
             BoxDecoration::new()
-                .color(if selected { WHITE } else { SIDEBAR })
+                .color(if selected { WHITE } else { Color::TRANSPARENT })
                 .border_radius(BorderRadius::all(Radius::circular(8.0))),
         )
         .child(
@@ -499,40 +607,9 @@ fn details(
     saved: &[String; 3],
     enabled: [bool; 3],
     name_error: Option<&str>,
-    go_back: impl Fn() + 'static,
     #[cfg(test)] fixture_enabled: Signal<bool>,
 ) -> Widget {
     let title = Provider::ALL[selected].label();
-    let gap = if compact { 8.0 } else { 12.0 };
-    let close_size = if compact { 32.0 } else { 28.0 };
-    let heading = Container::new()
-        .height(48.0)
-        .padding(EdgeInsets::from_ltrb(20.0, 0.0, 8.0, 0.0))
-        .child(
-            Row::new(vec![
-                breadcrumb_label("Settings", MUTED),
-                SizedBox::new().width(gap).into(),
-                breadcrumb_label("/", MUTED),
-                SizedBox::new().width(gap).into(),
-                breadcrumb_label("Providers", INK),
-                Spacer::new().into(),
-                Button::with_child(
-                    "Back to workspace",
-                    icon("close", if compact { 18.0 } else { 16.0 }, MUTED),
-                )
-                .style(
-                    ButtonStyle::new()
-                        .fixed_size(Size::new(close_size, close_size))
-                        .variant(ButtonVariant::Ghost)
-                        .background(Color::TRANSPARENT)
-                        .padding(EdgeInsets::ZERO),
-                )
-                .on_click(go_back)
-                .into(),
-            ])
-            .cross_axis_alignment(CrossAxisAlignment::Center),
-        );
-
     let choice_buttons: Vec<Widget> = saved
         .iter()
         .enumerate()
@@ -823,6 +900,49 @@ fn details(
         }));
     }
     content.push(provider_box);
+    Column::new(content)
+        .main_axis_size(MainAxisSize::Min)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .into()
+}
+
+fn settings_page(
+    layout: &ProviderGeometry,
+    section: Section,
+    compact: bool,
+    content: Widget,
+    go_back: impl Fn() + 'static,
+) -> Widget {
+    let gap = if compact { 8.0 } else { 12.0 };
+    let close_size = if compact { 32.0 } else { 28.0 };
+    let heading = Container::new()
+        .height(48.0)
+        .padding(EdgeInsets::from_ltrb(20.0, 0.0, 8.0, 0.0))
+        .child(
+            Row::new(vec![
+                breadcrumb_label("Settings", MUTED),
+                SizedBox::new().width(gap).into(),
+                breadcrumb_label("/", MUTED),
+                SizedBox::new().width(gap).into(),
+                breadcrumb_label(section.title(), INK),
+                Spacer::new().into(),
+                Button::with_child(
+                    "Back to workspace",
+                    icon("close", if compact { 18.0 } else { 16.0 }, MUTED),
+                )
+                .style(
+                    ButtonStyle::new()
+                        .fixed_size(Size::new(close_size, close_size))
+                        .variant(ButtonVariant::Ghost)
+                        .background(Color::TRANSPARENT)
+                        .padding(EdgeInsets::ZERO),
+                )
+                .on_click(go_back)
+                .into(),
+            ])
+            .cross_axis_alignment(CrossAxisAlignment::Center),
+        );
+
     Column::new(vec![
         Widget::from(heading),
         Container::new().height(1.0).color(RULE).into(),
@@ -836,11 +956,7 @@ fn details(
                         layout.gutter,
                         48.0,
                     ))
-                    .child(
-                        Column::new(content)
-                            .main_axis_size(MainAxisSize::Min)
-                            .cross_axis_alignment(CrossAxisAlignment::Stretch),
-                    ),
+                    .child(content),
             ),
         ))
         .into(),

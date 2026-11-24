@@ -1,3 +1,4 @@
+mod about_settings;
 mod empty_workspace;
 mod project_picker;
 mod provider_settings;
@@ -33,6 +34,7 @@ fn application(
 ) -> Result<Application, Box<dyn std::error::Error>> {
     typography::register();
     let settings_open = Signal::new(false);
+    let settings_navigation = provider_settings::Navigation::new();
     let settings_provider = Signal::new(2_usize);
     #[cfg(test)]
     let fixture_enabled = Signal::new(false);
@@ -130,6 +132,7 @@ fn application(
             let project = active_project.get();
             let workspace = if project.is_some() || scratch_open.get() {
                 let settings_open = settings_open.clone();
+                let settings_navigation = settings_navigation.clone();
                 let title = project.as_ref().map(|project| project.title());
                 let selected = selected_thread.clone();
                 let new_draft = selected_thread.clone();
@@ -179,6 +182,7 @@ fn application(
                         new_draft.set(None);
                     },
                     move || {
+                        settings_navigation.open_providers();
                         settings_open.set(true);
                     },
                     #[cfg(test)]
@@ -283,6 +287,7 @@ fn application(
                 provider_settings::overlay(
                     desktop,
                     &device,
+                    settings_navigation.clone(),
                     settings_provider.clone(),
                     provider_names.clone(),
                     move || {
@@ -634,6 +639,36 @@ mod ui_tests {
             "Alternate Cursor"
         );
         assert_eq!(profile.provider_name(Provider::Claude).unwrap(), "Claude");
+    }
+
+    #[test]
+    fn opens_bundled_licenses_and_returns_to_the_same_provider() {
+        let tmp = Fixture::new();
+        let root = tmp.0.join("profile");
+        Profile::new(&root).complete_onboarding().unwrap();
+        let mut app = application(Some(root), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open provider settings").unwrap();
+            sim.click("Select Claude").unwrap();
+            sim.move_mouse_to(Offset::new(135.0, 600.0)).unwrap();
+            sim.scroll(Offset::new(0.0, 320.0)).unwrap();
+            sim.focus("About").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.click("View licenses").unwrap();
+            sim.focus("Inter").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.focus("Inter").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.focus("Lucide and Feather").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.focus("Providers").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.click("Sign-in for Claude isn't available in this build.")
+                .unwrap();
+            sim.click("Back to workspace").unwrap();
+            sim.focus("Open provider settings").unwrap();
+        });
     }
 
     #[test]
