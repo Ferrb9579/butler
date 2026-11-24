@@ -162,6 +162,8 @@ capture_one() (
     capture_reference_new_project_form "$window"
   elif [[ "$name" == t3-git-url-review || "$name" == butler-git-url-review ]]; then
     capture_git_url_review "$window" "${name%-git-url-review}" "$runtime"
+  elif [[ "$name" == butler-git-url-keys ]]; then
+    capture_butler_git_url_keys "$window"
   elif [[ "$name" == butler && "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
     # Coordinates refer to the fixed-size Welcome fixture captured above.
     # Check durable state and a rendered route, not only a successful X11 click.
@@ -713,6 +715,114 @@ verify_git_url_review_pairs() {
     fi
   done
 }
+
+git_url_key_frame() {
+  local file=$1 phase=$2 query=${3:-}
+  local input='395x40+389+84' accessory='134x42+791+83' sources='574x380+353+81'
+  [[ $("${identify[@]}" -format '%wx%h' "$file") == '1280x800' ]] || return 1
+  case "$phase" in
+    typed)
+      [[ -n "$query" ]] && project_literal "$file" "$input" "$query" 7 &&
+        settings_phrase "$file" "$accessory" 'Continue' 7 >/dev/null
+      ;;
+    empty)
+      settings_phrase "$file" "$input" 'Enter Git clone URL' 7 >/dev/null &&
+        settings_phrase "$file" '500x35+389+161' 'Enter a Git clone URL and press Enter to continue' 7 >/dev/null
+      ;;
+    sources)
+      settings_phrase "$file" "$sources" 'Git URL' 11 >/dev/null &&
+        settings_phrase "$file" "$sources" 'Local folder' 11 >/dev/null &&
+        settings_phrase "$file" "$sources" 'GitHub repository' 11 >/dev/null
+      ;;
+    closed)
+      settings_phrase "$file" '470x104+535+355' 'What should we work on' 11 >/dev/null &&
+        settings_phrase "$file" '160x40+604+442' 'Add project' 7 >/dev/null &&
+        ! settings_phrase "$file" "$input" 'Enter Git clone URL' 7 >/dev/null
+      ;;
+    destination)
+      git_destination_frame butler "$file" '~/CaseRepo' 'https://github.com/ButlerFixture/CaseRepo.git'
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+await_git_url_key_frame() {
+  local window=$1 file=$2 phase=$3 tick; shift 3
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$file" || return 1
+    if git_url_key_frame "$file" "$phase" "$@"; then return 0; fi
+    # A focus caret can affect single-line OCR. Retry only the capture.
+    sleep 0.4
+  done
+  printf 'Butler Git URL keyboard fixture: unverified %s (%s)\n' "$phase" "${file##*/}" >&2
+  return 1
+}
+
+capture_butler_git_url_keys() {
+  local window=$1 prefix="$out/butler-git-url-keys"
+  local query='ButlerFixture/CaseRepo' input='395x40+389+84' sources='574x380+353+81'
+  click_project_control "$window" "$prefix-landing.png" '160x40+604+442' 'Add project' 7 || return 1
+  click_project_control "$window" "$prefix-sources.png" "$sources" 'Git URL' 11 || return 1
+  click_project_control "$window" "$prefix-empty.png" "$input" 'Enter Git clone URL' 7 || return 1
+  xdotool type --clearmodifiers "${query}X" || return 1
+  await_git_url_key_frame "$window" "$prefix-before-backspace.png" typed "${query}X" || return 1
+  xdotool windowfocus "$window" key --clearmodifiers BackSpace || return 1
+  await_git_url_key_frame "$window" "$prefix-edited.png" typed "$query" || return 1
+  xdotool windowfocus "$window" key --clearmodifiers ctrl+a BackSpace || return 1
+  await_git_url_key_frame "$window" "$prefix-cleared.png" empty || return 1
+  xdotool windowfocus "$window" key --clearmodifiers BackSpace || return 1
+  await_git_url_key_frame "$window" "$prefix-back-to-sources.png" sources || return 1
+
+  click_project_control "$window" "$prefix-sources-for-escape.png" "$sources" 'Git URL' 11 || return 1
+  click_project_control "$window" "$prefix-empty-for-escape.png" "$input" 'Enter Git clone URL' 7 || return 1
+  await_git_url_key_frame "$window" "$prefix-before-escape.png" empty || return 1
+  xdotool windowfocus "$window" key --clearmodifiers Escape || return 1
+  await_git_url_key_frame "$window" "$prefix-closed.png" closed || return 1
+
+  click_project_control "$window" "$prefix-reopened-from-landing.png" '160x40+604+442' 'Add project' 7 || return 1
+  click_project_control "$window" "$prefix-sources-for-enter.png" "$sources" 'Git URL' 11 || return 1
+  click_project_control "$window" "$prefix-empty-for-enter.png" "$input" 'Enter Git clone URL' 7 || return 1
+  xdotool type --clearmodifiers "$query" || return 1
+  await_git_url_key_frame "$window" "$prefix-before-enter.png" typed "$query" || return 1
+  # Exactly one Return, and only from the verified URL-entry state. Never
+  # retry the key or issue any pointer/keyboard input on clone review.
+  xdotool windowfocus "$window" key --clearmodifiers Return || return 1
+  await_git_url_key_frame "$window" "$prefix-destination.png" destination
+}
+
+verify_butler_git_url_keys() (
+  local name='butler-git-url-keys' rc
+  local runtime="$tmp/$name" notes="$out/$name-capture-notes.txt" marker="$out/$name-unverified"
+  touch "$marker" || return 1
+  printf '%s\n' \
+    'Optional Butler-only raw X11 Git URL keyboard fixture; separate from the click comparison.' \
+    'A focused Backspace deletes one character; Backspace on empty returns to Sources; Escape closes to the landing.' \
+    'One Return is sent only in the verified URL entry. Captures only after Return; no clone action or remote contact.' \
+    'A non-root, nonwritable fixture HOME blocks clone staging before the transport can run.' \
+    >"$notes" || return 1
+  mkdir -p -m 700 "$runtime/home/FixtureFolder" "$runtime/state/butler" || return 1
+  printf '%s\n' 'butler-onboarding-complete-v1' >"$runtime/state/butler/onboarding" || return 1
+  # clone_runner deliberately clears ambient Git settings. Keep the actual
+  # destination parent read-only instead: clone_stage must create its
+  # private staging directory there before it can invoke the transport.
+  chmod 500 "$runtime/home" || return 1
+  trap 'chmod 700 "$runtime/home"' EXIT
+  if (( EUID == 0 )) || [[ -w "$runtime/home" ]]; then
+    echo 'Keyboard fixture not launched: could not enforce a nonwritable HOME.' | tee -a "$notes" >&2
+    return 1
+  fi
+  set +e
+  HOME="$runtime/home" GIT_ALLOW_PROTOCOL= GIT_TERMINAL_PROMPT=0 capture_one "$name" "$butler"
+  rc=$?
+  set -e
+  if (( rc != 0 )) || [[ -w "$runtime/home" || -e "$runtime/home/CaseRepo" || -L "$runtime/home/CaseRepo" ||
+       -e "$runtime/state/butler/local-projects" ]] || compgen -G "$runtime/home/.butler-clone-*" >/dev/null; then
+    echo 'Butler Git URL keyboard fixture incomplete; raw frames are diagnostic only.' | tee -a "$notes" >&2
+    return 1
+  fi
+  rm -f -- "$marker" || return 1
+  echo 'Butler Git URL keyboard fixture verified (local review only).' | tee -a "$notes"
+)
 
 await_thread_draft() {
   local window=$1 file=$2 title=$3 tick
@@ -1682,6 +1792,15 @@ if [[ "${CAPTURE_T3_NEW_PROJECT_FORM:-0}" == 1 ]]; then
 fi
 if [[ "${CAPTURE_GIT_URL_REVIEW:-0}" == 1 ]]; then
   verify_git_url_review_pairs
+fi
+if [[ "${CAPTURE_BUTLER_GIT_URL_KEYS:-0}" == 1 ]]; then
+  set +e
+  verify_butler_git_url_keys
+  git_url_keys_rc=$?
+  set -e
+  if (( git_url_keys_rc != 0 )); then
+    echo 'Optional native Butler Git URL keyboard review did not complete; see unverified marker' >&2
+  fi
 fi
 if [[ "${VERIFY_BUTLER_THREAD_CHOOSER:-0}" == 1 ]]; then
   verify_native_thread_chooser
