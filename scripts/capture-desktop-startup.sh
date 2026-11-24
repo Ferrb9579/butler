@@ -15,10 +15,12 @@ tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 
 if command -v magick >/dev/null; then
+  transform=(magick)
   capture=(magick import)
   identify=(magick identify)
   compare=(magick compare)
 else
+  transform=(convert)
   capture=(import)
   identify=(identify)
   compare=(compare)
@@ -61,7 +63,11 @@ capture_one() (
   xdotool windowmove "$window" 0 0 windowsize "$window" "$width" "$height"
   xdotool mousemove 1390 890
   sleep 3
-  "${capture[@]}" -window "$window" "$out/$name-startup.png"
+  if [[ "$name" == t3 || "$name" == butler ]]; then
+    await_text "$window" "$out/$name-startup.png" 'Start without an agent' '240x42+270+601'
+  else
+    await_text "$window" "$out/$name-startup.png" 'Ask anything' '240x45+410+744'
+  fi
   dimensions=$("${identify[@]}" -format '%wx%h' "$out/$name-startup.png")
   if [[ "$dimensions" != "${width}x${height}" ]]; then
     echo "$name client is $dimensions, expected ${width}x${height}" >&2
@@ -73,11 +79,17 @@ capture_one() (
     echo "$name capture is blank or did not finish rendering" >&2
     return 1
   fi
-  if [[ "$name" == butler && "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
+  if [[ "$name" == t3 && "${CAPTURE_REFERENCE_LANDING:-0}" == 1 ]]; then
+    xdotool windowfocus "$window" mousemove --window "$window" 365 620 click 1
+    xdotool mousemove 1390 890
+    if ! await_text "$window" "$out/t3-after-welcome.png" 'what should we work on|ask anything'; then
+      touch "$out/t3-landing-unverified"
+    fi
+  elif [[ "$name" == butler && "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
     # Coordinates refer to the fixed-size Welcome fixture captured above.
     # Check durable state and a rendered route, not only a successful X11 click.
     [[ ! -e "$runtime/state/butler/onboarding" ]]
-    xdotool mousemove --window "$window" 365 620 click 1
+    xdotool windowfocus "$window" mousemove --window "$window" 365 620 click 1
     xdotool mousemove 1390 890
     for ((tick=0; tick<15; tick++)); do
       [[ -f "$runtime/state/butler/onboarding" ]] && break
@@ -88,22 +100,43 @@ capture_one() (
       echo "Welcome skip did not persist onboarding completion" >&2
       return 1
     fi
-    sleep 2
-    "${capture[@]}" -window "$window" "$out/butler-after-welcome.png"
-    assert_dark_workspace "$out/butler-after-welcome.png"
+    await_text "$window" "$out/butler-after-welcome.png" 'Ask anything' '240x45+410+744'
+    verify_draft_input "$window" "$out/butler-after-welcome-typed.png"
   elif [[ "$name" == butler-reopened ]]; then
-    assert_dark_workspace "$out/$name-startup.png"
+    verify_draft_input "$window" "$out/butler-reopened-typed.png"
   fi
 )
 
-assert_dark_workspace() {
-  # The draft workspace uses a dark canvas; Welcome uses a light one.
-  local is_dark
-  is_dark=$("${identify[@]}" -format '%[fx:p{640,400}.intensity<0.15]' "$1")
-  if [[ "$is_dark" != 1 ]]; then
-    echo "Expected the current dark workspace route in $1" >&2
-    return 1
+await_text() {
+  local window=$1 file=$2 expected=$3 crop=${4:-} tick actual
+  local -a image_options ocr_options
+  if [[ -n "$crop" ]]; then
+    image_options=(-crop "$crop" +repage -resize 350%)
+    ocr_options=(--psm 7)
+  else
+    image_options=(-resize 150%)
+    ocr_options=(--psm 11)
   fi
+  for ((tick=0; tick<45; tick++)); do
+    "${capture[@]}" -window "$window" "$file"
+    # OCR the real frame; window chrome alone does not imply app readiness.
+    actual=$(
+      "${transform[@]}" "$file" "${image_options[@]}" -colorspace gray -contrast-stretch 1%x1% png:- |
+        tesseract stdin stdout "${ocr_options[@]}" 2>/dev/null
+    )
+    if grep -qiE "$expected" <<<"$actual"; then return 0; fi
+    sleep 1
+  done
+  printf 'Expected text "%s" in %s; last recognized text:\n%s\n' "$expected" "$file" "$actual" >&2
+  return 1
+}
+
+verify_draft_input() {
+  local window=$1 file=$2
+  xdotool windowfocus "$window" mousemove --window "$window" 516 760 click 1
+  xdotool type --clearmodifiers 'Draft check 42'
+  xdotool mousemove 1390 890
+  await_text "$window" "$file" 'Draft check 42' '280x45+410+744'
 }
 
 capture_one t3 "$t3/AppRun"
@@ -120,4 +153,8 @@ printf 'Native startup differing pixels: %s\n' "$(cat "$out/differing-pixels.txt
 if [[ "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
   CAPTURE_PROFILE=butler capture_one butler-reopened "$butler"
   echo "Welcome skip and profile restart smoke test passed"
+fi
+if [[ -e "$out/t3-landing-unverified" ]]; then
+  echo "T3 Code post-onboarding state was not verified" >&2
+  exit 1
 fi
