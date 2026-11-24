@@ -40,6 +40,14 @@ When a gap affects Butler, record the Incular revision, platform or renderer if 
 
 **Repro / acceptance:** Show each framework's stock Material dialog over white with default theme. Sample a backdrop pixel outside the dialog after the animation. Repeat with a dialog theme specifying a different barrier color. Fix the stock default and theme resolution in Incular rather than overriding them in Butler. Runtime twin check pending.
 
+### IG-006: WGPU paints a variable face at its default weight
+
+**Status:** Runtime-verified on Butler's pinned Incular, using the WGPU backend's CPU glyph rasterizer. Flutter's [Skia paragraph builder](https://github.com/flutter/flutter/blob/master/engine/src/flutter/txt/src/skia/paragraph_builder_skia.cc#L173-L195) forwards the variation design position, including the requested weight when no explicit `wght` is supplied. Incular [passes the requested style to Parley](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-text/src/engine.rs#L2009-L2023), but the [retained glyph run](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-rendering/src/glyphs.rs#L16-L21) does not carry variation coordinates. Both [hinted and unhinted rasterization](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-wgpu/src/glyph_rasterizer.rs#L147-L188) use the default location.
+
+**Repro:** Register Butler's bundled Inter Variable face. Shape the same `H` at 48 px with W400, W600 and W900. All three select glyph 38 and the same font bytes, but their advances are 35.671875, 35.789063 and 36.0 px. Rasterizing each into its own fresh glyph atlas, at scale 1 and phase (0,0), produces the same 980-byte coverage mask in all three cases. The static Liberation Sans W400/W700 control selects distinct faces and produces distinct masks. Separate atlases rule out a cache collision as the sole cause. This does not establish a defect for static font faces or other backends.
+
+**Butler effect / acceptance:** Settings uses the original variable Inter face. Its shaped advances respond to weight, but this renderer paints the default W400 outlines. Forward the run variation coordinates through painting and both raster paths, key the glyph and hint caches by the variation instance, and verify that distinct weights produce distinct masks while repeated identical instances reuse their atlas entry. No Butler workaround.
+
 ## Investigations, not confirmed Incular gaps
 
 - Butler's compact scratch button clipped its label before switching from an outer width constraint to `ButtonStyle::fixed_size` ([native capture before the fix](https://github.com/Ferrb9579/butler/actions/runs/45329928604)). Reproduce the same widget constraints, font and padding in Flutter before blaming framework layout.
