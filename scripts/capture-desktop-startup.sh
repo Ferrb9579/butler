@@ -32,7 +32,7 @@ capture_one() (
   set -euo pipefail
   local name=$1; shift
   local profile=${CAPTURE_PROFILE:-$name}
-  local runtime="$tmp/$profile" window="" tick dimensions ready="" window_pid
+  local runtime="$tmp/$profile" window="" tick dimensions ready="" window_pid window_xid=""
   local log="$out/$name.log"
   mkdir -p -m 700 "$runtime"/{config,cache,data,state,run}
   if [[ "$name" == t3-thread-find ]]; then
@@ -43,8 +43,9 @@ capture_one() (
     ready="$runtime/electron.ready"
     set -- env ELECTRON_RUN_AS_NODE=1 timeout --kill-after=8s 210s "$1" \
       "$(dirname -- "${BASH_SOURCE[0]}")/diagnose-reference-find.cjs" \
-      "$t3" "$out/t3-thread-find-renderer-diagnostic.json" "$ready"
-    # Only the helper's structured report is suitable for upload.
+      "$t3" "$out/t3-thread-find-renderer-diagnostic.json" "$ready" "$width" "$height" \
+      "$out/t3-thread-find-renderer-diagnostic.png"
+    # Do not upload raw helper or Chromium logs.
     log=/dev/null
   fi
   XDG_CONFIG_HOME="$runtime/config" XDG_CACHE_HOME="$runtime/cache" \
@@ -59,11 +60,13 @@ capture_one() (
     window_pid="$pid"
     if [[ -n "$ready" ]]; then
       if [[ ! -s "$ready" ]]; then sleep 1; continue; fi
-      read -r window_pid <"$ready" || return 1
-      [[ "$window_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$window_pid" 2>/dev/null || return 1
+      read -r window_pid window_xid <"$ready" || return 1
+      [[ "$window_pid" =~ ^[1-9][0-9]*$ && "$window_xid" =~ ^[1-9][0-9]*$ ]] &&
+        kill -0 "$window_pid" 2>/dev/null || return 1
     fi
     while read -r id; do
       local geometry
+      [[ -z "$window_xid" || "$id" == "$window_xid" ]] || continue
       geometry=$(xdotool getwindowgeometry --shell "$id" 2>/dev/null) || continue
       if grep -Eq '^WIDTH=([5-9][0-9]{2}|[0-9]{4,})$' <<<"$geometry" &&
          grep -Eq '^HEIGHT=([3-9][0-9]{2}|[0-9]{4,})$' <<<"$geometry"; then
@@ -81,7 +84,9 @@ capture_one() (
     return 1
   fi
 
-  xdotool windowmove "$window" 0 0 windowsize "$window" "$width" "$height"
+  if [[ -z "$ready" ]]; then
+    xdotool windowmove "$window" 0 0 windowsize "$window" "$width" "$height"
+  fi
   xdotool mousemove 1390 890
   sleep 3
   if [[ "$name" == t3 || "$name" == t3-new-project-form || "$name" == t3-git-url-review || "$name" == butler ]]; then
@@ -197,7 +202,7 @@ capture_one() (
   elif [[ "$name" == butler-thread-chooser ]]; then
     capture_native_thread_chooser "$window" "$runtime"
   elif [[ "$name" == t3-thread-find || "$name" == butler-thread-find ]]; then
-    capture_native_thread_find "$window" "${name%-thread-find}" "$thread_title"
+    capture_native_thread_find "$window" "${name%-thread-find}" "$thread_title" "$ready"
   fi
 )
 
@@ -884,7 +889,7 @@ thread_find_count_label() {
 }
 
 capture_native_thread_find() {
-  local window=$1 app=$2 title=$3 coords x y anchor_y input title_crop deadline
+  local window=$1 app=$2 title=$3 ready=$4 coords x y anchor_y input title_crop deadline
   local prefix="$out/$app-thread-find" bar='278x92+988+37'
   if [[ "$app" == butler ]]; then
     title_crop=$(thread_find_row_crop "$app") || return 1
@@ -898,6 +903,13 @@ capture_native_thread_find() {
   done
   if ! thread_find_transcript "$app" "$prefix-transcript.png"; then
     echo "$app: could not verify both saved messages in the opened transcript" >&2
+    if [[ "$app" == t3 && -n "$ready" ]]; then
+      # For diagnosis only, request same-size Chromium pixels from the exact
+      # BrowserWindow. This frame can't pass or replace native OCR.
+      touch "$ready.diagnostic" || return 1
+      deadline=$((SECONDS + 8))
+      while [[ ! -f "$ready.diagnosed" ]] && (( SECONDS < deadline )); do sleep 0.25; done
+    fi
     return 1
   fi
 

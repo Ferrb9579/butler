@@ -1,6 +1,6 @@
 // Run as Node using the checksum-pinned T3 binary. Open the disposable fixture
 // using its real sidebar route, then keep that Electron window for X11 capture.
-// Emit counts and booleans only; the on-screen OCR remains the screenshot gate.
+// Emit bounded geometry and booleans; only on-screen OCR verifies a frame.
 "use strict";
 
 const path = require("node:path");
@@ -14,6 +14,8 @@ async function main() {
   process.once("SIGTERM", onStop);
   process.once("SIGINT", onStop);
   const ready = process.argv[4];
+  const size = { width: Number(process.argv[5]), height: Number(process.argv[6]) };
+  const diagnosticPng = process.argv[7];
   const failures = { page: 0, console: 0 };
   const report = (summary) => fs.writeFileSync(process.argv[3], JSON.stringify(summary) + "\n", {
     mode: 0o600,
@@ -41,6 +43,24 @@ async function main() {
     page.on("console", (message) => {
       if (message.type() === "error") failures.console++;
     });
+    stage = "native-window";
+    const native = await app.browserWindow(page);
+    const xid = await native.evaluate((window, size) => {
+      // The pinned Linux reference is x86-64. An X11 resource ID fits in
+      // the low 32 bits of the native unsigned-long handle.
+      const handle = window.getNativeWindowHandle();
+      if (handle.length < 4) return 0;
+      window.setBounds({ x: 0, y: 0, ...size });
+      return handle.readUInt32LE(0);
+    }, size);
+    if (!Number.isSafeInteger(xid) || xid <= 0) throw new Error("Invalid Electron XID");
+    // Size before navigation; a native resize after the selected view has
+    // rendered may rebuild the virtual timeline.
+    stage = "viewport-size";
+    await page.waitForFunction(
+      ({ width, height }) => innerWidth === width && innerHeight === height,
+      size, { timeout: 8_000 },
+    );
 
     stage = "thread";
     const thread = page.locator("li[data-thread-item]", { hasText: "Release launch check" });
@@ -56,14 +76,19 @@ async function main() {
     ));
     const summary = await page.evaluate(({ user, assistant }) => {
       const rows = [...document.querySelectorAll('[data-timeline-row-kind="message"]')];
+      const geometry = (rect) => rect ? {
+        x: Math.round(rect.x), y: Math.round(rect.y),
+        width: Math.round(rect.width), height: Math.round(rect.height),
+      } : null;
       const count = (id, phrase) => {
         const row = rows.find((element) => element.dataset.messageId === id);
-        if (!row) return { row: false, phrase: false, intersectsViewport: false };
+        if (!row) return { row: false, phrase: false, intersectsViewport: false, rect: null };
         const rect = row.getBoundingClientRect();
         const viewport = row.closest(".messages-timeline-scroll")?.getBoundingClientRect();
         return {
           row: true,
           phrase: row.innerText.includes(phrase),
+          rect: geometry(rect),
           intersectsViewport:
             rect.width > 0 && rect.height > 0 &&
             rect.right > Math.max(0, viewport?.left ?? 0) &&
@@ -73,15 +98,24 @@ async function main() {
         };
       };
       return {
+        viewport: { width: innerWidth, height: innerHeight },
+        timeline: geometry(document.querySelector(".messages-timeline-scroll")?.getBoundingClientRect()),
         loading: document.querySelectorAll('[data-timeline-loading="true"]').length,
         rows: rows.length,
         user: count("launch-check-user", user),
         assistant: count("launch-check-assistant", assistant),
       };
     }, { user, assistant });
-    report({ stage: "complete", failures, ...summary });
+    const nativeSize = await native.evaluate((window) => {
+      const { width, height } = window.getBounds();
+      return { width, height };
+    });
+    const result = { stage: "complete", failures, nativeSize, ...summary };
+    report(result);
     if (ready !== undefined) {
-      if (!summary.user.phrase || !summary.user.intersectsViewport ||
+      if (nativeSize.width !== size.width || nativeSize.height !== size.height ||
+          summary.viewport.width !== size.width || summary.viewport.height !== size.height ||
+          !summary.user.phrase || !summary.user.intersectsViewport ||
           !summary.assistant.phrase || !summary.assistant.intersectsViewport) {
         process.exitCode = 1;
         return;
@@ -89,13 +123,33 @@ async function main() {
       const pid = app.process().pid;
       if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid Electron PID");
       // This private file tells bash which real window to capture, never how
-      // to evaluate a frame. Rename so bash can only see a complete PID.
-      fs.writeFileSync(`${ready}.tmp`, `${pid}\n`, { mode: 0o600, flag: "wx" });
+      // to evaluate a frame. Rename so bash only sees a complete PID and XID.
+      fs.writeFileSync(`${ready}.tmp`, `${pid} ${xid}\n`, { mode: 0o600, flag: "wx" });
       fs.renameSync(`${ready}.tmp`, ready);
-      await Promise.race([
-        delay(155_000, undefined, { signal: stop.signal, ref: false }).catch(() => {}),
-        new Promise((resolve) => app.once("close", resolve)),
-      ]);
+      app.once("close", onStop);
+      const expires = Date.now() + 155_000;
+      let diagnosed = false;
+      while (!stop.signal.aborted && Date.now() < expires) {
+        if (!diagnosed && diagnosticPng && fs.existsSync(`${ready}.diagnostic`)) {
+          diagnosed = true;
+          // Triggered only if the physical transcript is blank. Capture the
+          // same-size renderer separately, never as a native pair candidate.
+          let screenshot = "failed";
+          try {
+            if (await page.evaluate(
+              ({ width, height }) => innerWidth === width && innerHeight === height &&
+                document.querySelector("[data-chat-header]")?.innerText.includes("Release launch check"),
+              size,
+            )) {
+              await page.screenshot({ path: diagnosticPng, scale: "css", timeout: 5_000 });
+              screenshot = "captured";
+            }
+          } catch {}
+          report({ ...result, rendererDiagnostic: screenshot });
+          fs.writeFileSync(`${ready}.diagnosed`, "", { mode: 0o600, flag: "wx" });
+        }
+        await delay(250, undefined, { signal: stop.signal, ref: false }).catch(() => {});
+      }
     }
   } catch {
     // Never include Playwright errors, logs, HTML or URLs in the artifact.
