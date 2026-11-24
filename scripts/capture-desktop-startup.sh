@@ -73,6 +73,10 @@ capture_one() (
     await_new_project_workspace "$window" "$out/$name-startup.png"
   elif [[ "$name" == butler-thread-chooser ]]; then
     await_thread_draft "$window" "$out/$name-startup.png" 'Project Beta'
+  elif [[ "$name" == t3-thread-find || "$name" == butler-thread-find ]]; then
+    local thread_title='Release launch check'
+    if [[ "$name" == butler-thread-find ]]; then thread_title='Does the release open'; fi
+    await_project_phrase "$window" "$out/$name-startup.png" '246x650+6+75' "$thread_title" 11 >/dev/null || return 1
   else
     await_text "$window" "$out/$name-startup.png" 'What should we work on' '465x103+535+355'
   fi
@@ -171,6 +175,8 @@ capture_one() (
     assert_new_project_files "$runtime/state/butler"
   elif [[ "$name" == butler-thread-chooser ]]; then
     capture_native_thread_chooser "$window" "$runtime"
+  elif [[ "$name" == t3-thread-find || "$name" == butler-thread-find ]]; then
+    capture_native_thread_find "$window" "${name%-thread-find}" "$thread_title"
   fi
 )
 
@@ -801,6 +807,197 @@ verify_native_thread_chooser() {
   echo 'Verified native chooser choices, filter, fresh draft, saved project order/titles, and unchanged fixture trees' | tee -a "$notes"
 }
 
+thread_find_transcript() {
+  # The native Butler transcript starts 16 px below its 40 px header.
+  # Keep that first line, while excluding the header/sidebar title.
+  local file=$1 crop='940x718+281+43'
+  settings_phrase "$file" "$crop" 'Does the release open' 11 >/dev/null &&
+    settings_phrase "$file" "$crop" 'The release opens and shows this thread' 11 >/dev/null
+}
+
+await_thread_find_count() {
+  local window=$1 file=$2 query=$3 count=$4 anchor_y=$5 tick coords unused y
+  local input="135x29+995+$((anchor_y - 14))"
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$file" || return 1
+    coords=$(settings_phrase "$file" "$input" "$query" 7) || coords=
+    if [[ -n "$coords" ]]; then
+      read -r unused y <<<"$coords"
+      if (( y >= anchor_y-5 && y <= anchor_y+5 )) &&
+         project_literal "$file" "$input" "$query" 7 &&
+         thread_find_count_label "$file" "$count" "$y" &&
+         thread_find_transcript "$file"; then
+        return 0
+      fi
+    fi
+    sleep 0.4
+  done
+  printf 'Could not verify Find input %s, count %s, and both transcript messages in %s\n' "$query" "$count" "$file" >&2
+  return 1
+}
+
+thread_find_count_label() {
+  local file=$1 count=$2 center_y=$3 top
+  top=$((center_y - 12))
+  # The input and count share a baseline. Isolate the label before the
+  # glyph-only arrow buttons; recognize the slash and both digits literally.
+  project_literal "$file" "49x25+1138+$top" "$count" 7 ||
+    settings_ocr "$file" "87x25+1112+$top" 11 |
+      awk -F '\t' -v want="$count" '$1 == 5 && $11 >= 20 && $12 == want {found=1} END {exit !found}'
+}
+
+capture_native_thread_find() {
+  local window=$1 app=$2 title=$3 tick coords x y anchor_y input
+  local prefix="$out/$app-thread-find" bar='278x92+988+37'
+  click_project_control "$window" "$prefix-thread-row.png" '246x650+6+75' "$title" 11 || return 1
+  for ((tick=0; tick<18; tick++)); do
+    "${capture[@]}" -window "$window" "$prefix-transcript.png" || return 1
+    if thread_find_transcript "$prefix-transcript.png"; then break; fi
+    sleep 0.5
+  done
+  if (( tick == 18 )); then
+    echo "$app: could not verify both saved messages in the opened transcript" >&2
+    return 1
+  fi
+
+  # Incular button clicks don't take keyboard focus. Normal Tab moves focus
+  # inside the selected workspace so Butler's scoped Find shortcut can run.
+  if [[ "$app" == butler ]]; then xdotool windowfocus "$window" key Tab || return 1; fi
+  xdotool windowfocus "$window" key ctrl+f || return 1
+  coords=$(await_project_phrase "$window" "$prefix-open.png" "$bar" 'Find in thread' 11) || return 1
+  # Only type after the Find placeholder is OCR-verified in the pane's
+  # top-right bar. Never press Return or click a send/provider control.
+  read -r x y <<<"$coords"
+  anchor_y=$y
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 || return 1
+  xdotool type --clearmodifiers 'release' || return 1
+  xdotool mousemove 1390 890 || return 1
+  await_thread_find_count "$window" "$prefix-match.png" 'release' '1/2' "$anchor_y" || return 1
+
+  # Both pinned bars end 12 px from the pane edge, with 1 px border,
+  # 4 px right padding and three 24 px buttons separated by 2 px.
+  # Only after OCR established Find and 1/2, click the middle (Next) slot,
+  # centered at x=1225 in the 1280 px client. The count must actually advance.
+  local next_x=$((width - 12 - 1 - 4 - 12 - 26))
+  if xdotool windowfocus "$window" mousemove --window "$window" "$next_x" "$anchor_y" click 1 &&
+     xdotool mousemove 1390 890 &&
+     await_thread_find_count "$window" "$prefix-next.png" 'release' '2/2' "$anchor_y"; then
+    rm -f -- "$prefix-next-unverified" || return 1
+  else
+    echo "$app: optional Find Next diagnostic not verified" >&2
+  fi
+
+  # Read the live input again, not the earlier 1/2 frame. A failed Next
+  # count does not prevent verifying no-match when the input is still there.
+  input="135x29+995+$((anchor_y - 14))"
+  coords=$(await_project_phrase "$window" "$prefix-before-no-match.png" "$input" 'release' 7) || return 1
+  project_literal "$prefix-before-no-match.png" "$input" 'release' 7 || return 1
+  read -r x y <<<"$coords"
+  (( y >= anchor_y-5 && y <= anchor_y+5 )) || return 1
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 key ctrl+a || return 1
+  xdotool type --clearmodifiers 'absent' || return 1
+  xdotool mousemove 1390 890 || return 1
+  await_thread_find_count "$window" "$prefix-no-match.png" 'absent' '0/0' "$anchor_y"
+}
+
+seed_butler_thread_find() {
+  local runtime=$1 profile=$1/state/butler project=$1/project
+  local thread='a0142a87-8050-43fc-9d39-038947dff1aa'
+  mkdir -p -m 700 "$profile/threads" "$project" || return 1
+  printf '%s\n' 'butler-onboarding-complete-v1' >"$profile/onboarding" || return 1
+  printf '%s\ntitle\t"Launch Check"\n' "$project" >"$profile/local-projects" || return 1
+  python3 - "$profile/threads/$thread.json" "$thread" "$project" <<'PY'
+import json
+import pathlib
+import sys
+
+output, thread, project = sys.argv[1:]
+pathlib.Path(output).write_text(json.dumps([2, {
+    "id": thread,
+    "workspace": {"Local": project},
+    "prompt": "Does the release open?",
+    "reply": "The release opens and shows this thread.",
+    "follow_ups": [],
+}]), encoding="utf-8")
+PY
+}
+
+butler_thread_find_snapshot() (
+  cd -- "$1" || return 1
+  sha256sum -- state/butler/local-projects state/butler/threads/*.json || return 1
+  find project state/butler/threads -printf '%p\t%y\t%m\t%s\t%T@\t%C@\n' | LC_ALL=C sort
+)
+
+verify_native_thread_find() {
+  local source=$1 app name runtime binary before after state rc
+  local fixture_sha='e65f15f89a847a264cf4366cd7bcdc31cef1d5fbfd07707ed497cc0f045357b5'
+  local notes="$out/thread-find-capture-notes.txt"
+  touch "$out/t3-thread-find-unverified" "$out/butler-thread-find-unverified" \
+    "$out/t3-thread-find-next-unverified" "$out/butler-thread-find-next-unverified" \
+    "$out/thread-find-match-pair-unverified" "$out/thread-find-next-pair-unverified" \
+    "$out/thread-find-no-match-pair-unverified" || return 1
+  printf '%s\n' \
+    'Paired native X11 Find diagnostic using two identical synthetic saved messages; sidebar titles differ by app.' \
+    'T3 Code v0.1.11 (59651c1761f6c63e9b6056839067066968e6a406), official scripts/fixtures/desktop-launch/statev2.sqlite (MIT, T3 Tools Inc.).' \
+    "Reference fixture SHA256: $fixture_sha" \
+    'See provenance.txt for Butler commit. No provider setup, prompt submission, or Return key is used.' \
+    'Each verified frame shows the existing transcript and the matching query/count. Raw diffs are diagnostic, not pixel parity.' \
+    >"$notes" || return 1
+  for app in t3 butler; do
+    name="$app-thread-find"
+    runtime=$(realpath -m -- "$tmp/$name") || return 1
+    mkdir -p -m 700 "$runtime/home" || return 1
+    if [[ "$app" == t3 ]]; then
+      # Upstream release smoke uses a disposable copy, because startup runs
+      # migrations. Its persisted project path must not target an existing user folder.
+      if [[ ! -f "$source" || -e /tmp/t3-launch-check-workspace || -L /tmp/t3-launch-check-workspace ]] ||
+         ! mkdir -p -m 700 "$runtime/t3-code/userdata" ||
+         ! cp -- "$source" "$runtime/t3-code/userdata/statev2.sqlite" ||
+         ! printf '%s  %s\n' "$fixture_sha" "$runtime/t3-code/userdata/statev2.sqlite" | sha256sum --check --status; then
+        echo 'T3 Find fixture missing, checksum mismatched, or fixture workspace already exists; T3 not launched.' | tee -a "$notes" >&2
+        continue
+      fi
+      binary="$t3/AppRun"
+    else
+      binary="$butler"
+      seed_butler_thread_find "$runtime" || continue
+      before=$(butler_thread_find_snapshot "$runtime") || continue
+    fi
+    HOME="$runtime/home" T3CODE_HOME="$runtime/t3-code" T3CODE_TELEMETRY_ENABLED=false \
+      T3CODE_DISABLE_AUTO_UPDATE=true GIT_ALLOW_PROTOCOL= GIT_TERMINAL_PROMPT=0 \
+      CAPTURE_PROFILE="$name" capture_one "$name" "$binary"
+    rc=$?
+    if (( rc != 0 )); then
+      printf '%s: native Find diagnostic incomplete; see its unverified marker\n' "$app" | tee -a "$notes" >&2
+      continue
+    fi
+    if [[ "$app" == butler ]]; then
+      after=$(butler_thread_find_snapshot "$runtime") || continue
+      if [[ "$before" != "$after" || -e "$runtime/state/butler/scratch" ]]; then
+        echo 'Butler Find fixture changed unexpectedly; do not use its frames as verified' | tee -a "$notes" >&2
+        touch "$out/$name-next-unverified" || return 1
+        continue
+      fi
+    fi
+    rm -f -- "$out/$name-unverified" || return 1
+    printf '%s: verified transcript, release 1/2, and absent 0/0\n' "$app" | tee -a "$notes"
+    if [[ ! -e "$out/$name-next-unverified" ]]; then
+      printf '%s: verified the native Next button advanced to 2/2\n' "$app" | tee -a "$notes"
+    fi
+  done
+  for state in match next no-match; do
+    if [[ ! -e "$out/t3-thread-find-unverified" && ! -e "$out/butler-thread-find-unverified" ]] &&
+       { [[ "$state" != next ]] ||
+         [[ ! -e "$out/t3-thread-find-next-unverified" && ! -e "$out/butler-thread-find-next-unverified" ]]; } &&
+       compare_frames "t3-thread-find-$state" "butler-thread-find-$state" "thread-find-$state"; then
+      rm -f -- "$out/thread-find-$state-pair-unverified" || return 1
+      printf 'Thread Find %s: verified route pair (raw diagnostic diff)\n' "$state" | tee -a "$notes"
+    else
+      printf 'Thread Find %s: optional pair not verified\n' "$state" | tee -a "$notes" >&2
+    fi
+  done
+}
+
 set +e
 capture_one t3 "$t3/AppRun"
 reference_rc=$?
@@ -889,4 +1086,15 @@ if [[ "${CAPTURE_GIT_URL_REVIEW:-0}" == 1 ]]; then
 fi
 if [[ "${VERIFY_BUTLER_THREAD_CHOOSER:-0}" == 1 ]]; then
   verify_native_thread_chooser
+fi
+if [[ -n "${CAPTURE_THREAD_FIND_DB:-}" ]]; then
+  # Keep the main smoke verdict. capture_one has its own errexit, so do
+  # not put it or its caller in an if/|| test (which suppresses errexit).
+  set +e
+  verify_native_thread_find "$CAPTURE_THREAD_FIND_DB"
+  find_rc=$?
+  set -e
+  if (( find_rc != 0 )); then
+    echo 'Optional native Thread Find did not complete; see unverified markers' >&2
+  fi
 fi

@@ -52,6 +52,20 @@ jobs:
           # Chromium's Linux sandbox helper. Restore it on the isolated runner.
           sudo chown root:root squashfs-root/chrome-sandbox
           sudo chmod 4755 squashfs-root/chrome-sandbox
+      - name: Verify pinned Find fixture
+        run: |
+          cd artifacts/reference
+          # T3's own release-smoke database: only synthetic local transcripts.
+          if curl --fail --location --retry 2 --connect-timeout 10 --max-time 45 \
+              --proto '=https' --proto-redir '=https' \
+              https://raw.githubusercontent.com/pingdotgg/t3code/59651c1761f6c63e9b6056839067066968e6a406/scripts/fixtures/desktop-launch/statev2.sqlite \
+              --output statev2.sqlite.tmp &&
+             echo 'e65f15f89a847a264cf4366cd7bcdc31cef1d5fbfd07707ed497cc0f045357b5  statev2.sqlite.tmp' | sha256sum --check; then
+            mv -- statev2.sqlite.tmp statev2.sqlite
+          else
+            rm -f -- statev2.sqlite.tmp statev2.sqlite
+            echo '::warning::The verified Find fixture is unavailable; its captures will be marked unverified.'
+          fi
       - name: Capture both desktop windows
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
@@ -61,6 +75,7 @@ jobs:
           CAPTURE_T3_NEW_PROJECT_FORM: '1'
           CAPTURE_GIT_URL_REVIEW: '1'
           CAPTURE_REFERENCE_LANDING: '1'
+          CAPTURE_THREAD_FIND_DB: artifacts/reference/statev2.sqlite
         run: |
           mkdir -p artifacts/ui-native
           printf 'T3 Code v0.1.11 (59651c1761f6c63e9b6056839067066968e6a406)\nButler %s\n' \
