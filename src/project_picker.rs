@@ -157,12 +157,12 @@ impl RemoteFlow {
         }
     }
 
-    fn browse_action(&self, name: &str, directory: PathBuf, busy: bool) -> Widget {
+    fn browse_action(&self, glyph: &str, name: &str, directory: PathBuf, busy: bool) -> Widget {
         let remote = self.clone();
         let surface = ActionSurface::with_child(row(
             32.0,
             Row::new(vec![
-                icon("palette-folder-plus", 16.0, MUTED),
+                icon(glyph, 16.0, MUTED),
                 label(name, 14.0, FontWeight::W400, INK),
             ])
             .spacing(8.0)
@@ -531,6 +531,7 @@ pub fn overlay(
                 let mut dirs = Vec::new();
                 if let Some(parent) = listing.directory.parent().map(PathBuf::from) {
                     dirs.push(browse_action(
+                        "corner-left-up",
                         "Parent directory",
                         parent,
                         browse.clone(),
@@ -540,6 +541,7 @@ pub fn overlay(
                 }
                 for (name, target) in listing.children {
                     dirs.push(browse_action(
+                        "folder",
                         &name,
                         target,
                         browse.clone(),
@@ -692,13 +694,14 @@ pub fn overlay(
                 let mut choices = Vec::new();
                 if !at_home && let Some(parent) = listing.directory.parent() {
                     choices.push(remote.browse_action(
+                        "corner-left-up",
                         "Parent directory",
                         parent.to_owned(),
                         creating,
                     ));
                 }
                 for (name, path) in listing.children {
-                    choices.push(remote.browse_action(&name, path, creating));
+                    choices.push(remote.browse_action("folder", &name, path, creating));
                 }
                 if !choices.is_empty() {
                     has_choices = true;
@@ -1038,20 +1041,29 @@ fn navigate(
 }
 
 fn browse_action(
+    glyph: &str,
     name: &str,
     target: PathBuf,
     browse: Signal<Option<FolderListing>>,
     error: Signal<Option<String>>,
     path: TextEditingController,
 ) -> Widget {
-    ActionSurface::with_child(row(32.0, label(name, 14.0, FontWeight::W400, INK)))
-        .size(Size::new(574.0, 32.0))
-        .label(name)
-        .hover_color(Color::rgba(241, 241, 244, 255))
-        .on_press(move || {
-            if navigate(target.clone(), &browse, &error) {
-                path.set_text(target.to_string_lossy().into_owned());
-            }
-        })
-        .into()
+    ActionSurface::with_child(row(
+        32.0,
+        Row::new(vec![
+            icon(glyph, 16.0, MUTED),
+            label(name, 14.0, FontWeight::W400, INK),
+        ])
+        .spacing(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center),
+    ))
+    .size(Size::new(574.0, 32.0))
+    .label(name)
+    .hover_color(Color::rgba(241, 241, 244, 255))
+    .on_press(move || {
+        if navigate(target.clone(), &browse, &error) {
+            path.set_text(target.to_string_lossy().into_owned());
+        }
+    })
+    .into()
 }

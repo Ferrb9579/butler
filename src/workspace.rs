@@ -2,12 +2,13 @@
 //! Reference: T3 Code v0.1.11 desktop, native fixture 45329928604.
 
 use crate::message_search::{MessageSource, Results};
+use crate::settings_icons::icon;
 use crate::sidebar_search::{self, Search};
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::threads::{Conversation, ThreadSummary};
 use incular::prelude::*;
 
-use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, label, sidebar, space};
+use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, icon_label, label, sidebar, space};
 
 pub fn draft(
     project: Option<String>,
@@ -24,6 +25,7 @@ pub fn draft(
 ) -> Widget {
     let title = project.clone().unwrap_or_else(|| "No project".into());
     let rendered_query = search.query();
+    let sidebar_settings = open_settings.clone();
     let sidebar = Widget::stateful_builder(search.revision(), move |_| {
         let active = search.active();
         let matching = if active {
@@ -152,6 +154,7 @@ pub fn draft(
             project.as_deref(),
             add_project.clone(),
             Some(new_thread.clone()),
+            sidebar_settings.clone(),
             Some(sidebar_search::field(search.clone(), ids, choose_thread)),
             threads,
         )
@@ -259,10 +262,12 @@ fn composer(
                     ),
                     Spacer::new().into(),
                     Row::new(vec![
-                        label("♧", 15.0, FontWeight::W400, MUTED),
+                        icon("paperclip", 16.0, MUTED),
                         Spacer::new().into(),
                         crate::provider_settings::action("Open provider settings", open_settings),
-                        label("♩     ↑", 14.0, FontWeight::W400, MUTED),
+                        icon("mic", 16.0, MUTED),
+                        SizedBox::new().width(10.0).into(),
+                        crate::settings_icons::compose_send(MUTED),
                     ])
                     .into(),
                 ])
@@ -272,7 +277,7 @@ fn composer(
         space(10.0),
         Container::new()
             .alignment(Alignment::CENTER_RIGHT)
-            .child(label("⊘ Full access", 12.0, FontWeight::W400, MUTED))
+            .child(icon_label("shield-off", 14.0, "Full access", 12.0, MUTED))
             .into(),
     ])
     .cross_axis_alignment(CrossAxisAlignment::Stretch)

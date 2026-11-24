@@ -1,3 +1,4 @@
+use crate::settings_icons::icon;
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use incular::prelude::*;
 
@@ -69,11 +70,26 @@ pub fn view(
 }
 
 fn agents_section(narrow: bool, expanded: bool, agents_open: Signal<bool>) -> Widget {
-    let title = Button::new(if expanded {
-        "+   Set up an agent   ▴"
-    } else {
-        "+   Set up an agent   ▾"
-    })
+    let title = Button::with_child(
+        "Set up an agent",
+        Row::new(vec![
+            icon("plus", 16.0, MUTED),
+            text("Set up an agent", 14.0, FontWeight::W400, INK),
+            icon(
+                if expanded {
+                    "chevron-up"
+                } else {
+                    "chevron-down"
+                },
+                16.0,
+                MUTED,
+            ),
+        ])
+        .spacing(12.0)
+        .main_axis_size(MainAxisSize::Min)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .into(),
+    )
     .style(button_style(32.0, BACKGROUND, INK).variant(ButtonVariant::Ghost))
     .on_click(move || agents_open.update(|open| *open = !*open));
     let mut right: Vec<Widget> = vec![
@@ -154,7 +170,16 @@ fn agent((name, action): (&str, &str)) -> Widget {
     Container::new()
         .height(36.0)
         .child(Row::new(vec![
-            Widget::from(SizedBox::new().width(30.0)),
+            Widget::from(
+                Container::new()
+                    .width(30.0)
+                    .alignment(Alignment::CENTER_LEFT)
+                    .child(if name == "Use Butler on your phone" {
+                        icon("smartphone", 16.0, MUTED)
+                    } else {
+                        crate::settings_icons::provider_brand(name, 16.0, INK, false)
+                    }),
+            ),
             Expanded::new(text(name, 14.0, FontWeight::W400, INK)).into(),
             Button::new(action)
                 .style(button_style(24.0, Color::rgba(255, 255, 255, 255), INK))

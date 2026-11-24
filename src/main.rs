@@ -303,6 +303,8 @@ fn application_with_transport(
                         let scratch_open = scratch_open.clone();
                         let picker = picker.clone();
                         let path = path.clone();
+                        let settings_open = settings_open.clone();
+                        let settings_navigation = settings_navigation.clone();
                         empty_workspace::view(
                             can_start_without_project,
                             move || {
@@ -311,6 +313,10 @@ fn application_with_transport(
                             move || {
                                 path.clear();
                                 picker.set(Picker::Sources);
+                            },
+                            move || {
+                                settings_navigation.open_providers();
+                                settings_open.set(true);
                             },
                         )
                     }
@@ -799,7 +805,7 @@ mod ui_tests {
         let mut app =
             application(Some(state.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut app, |sim| {
-            sim.click("＋ Add project").unwrap();
+            sim.click("Add project").unwrap();
             sim.click("New project").unwrap();
             sim.focus("Project name").unwrap();
             sim.type_text("Café Build").unwrap();
@@ -856,7 +862,7 @@ mod ui_tests {
         )
         .unwrap();
         interact(&mut app, move |sim| {
-            sim.click("＋ Add project").unwrap();
+            sim.click("Add project").unwrap();
             sim.click("Git URL").unwrap();
             sim.focus("Enter Git clone URL").unwrap();
             sim.type_text("ButlerFixture/CaseRepo").unwrap();
@@ -908,7 +914,7 @@ mod ui_tests {
         )
         .unwrap();
         interact(&mut app, |sim| {
-            sim.click("＋ Add project").unwrap();
+            sim.click("Add project").unwrap();
             sim.click("Git URL").unwrap();
             sim.focus("Enter Git clone URL").unwrap();
             sim.type_text("ButlerFixture/Failure").unwrap();
@@ -943,7 +949,7 @@ mod ui_tests {
         Profile::new(&state).complete_onboarding().unwrap();
         let mut app = application(Some(state), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut app, |sim| {
-            sim.click("＋ Add project").unwrap();
+            sim.click("Add project").unwrap();
             sim.click("New project").unwrap();
             sim.focus("Project name").unwrap();
             sim.type_text("A").unwrap();
@@ -955,7 +961,7 @@ mod ui_tests {
             sim.focus("Project name").unwrap();
             sim.press("Escape".parse().unwrap()).unwrap();
             assert!(sim.focus("Project name").is_err());
-            sim.focus("＋ Add project").unwrap();
+            sim.focus("Add project").unwrap();
         });
     }
 
@@ -1177,7 +1183,7 @@ mod ui_tests {
         let mut app =
             application(Some(profile.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut app, move |sim| {
-            sim.click("＋ Add project").expect("open source picker");
+            sim.click("Add project").expect("open source picker");
             sim.click("Local folder")
                 .expect("choose existing local folder");
             sim.type_into("Absolute folder path", path)
@@ -1195,11 +1201,26 @@ mod ui_tests {
             sim.click("Native test folder")
                 .expect("reopened UI displays the imported project");
             assert!(
-                sim.click("＋ Add project").is_err(),
+                sim.click("Start without a project").is_err(),
                 "reopened application must not show the empty workspace"
             );
         });
     }
+    #[test]
+    fn opens_settings_from_the_empty_workspace_footer() {
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let mut app = application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.focus("Settings").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.focus("Enable Cursor").unwrap();
+            sim.click("Back to workspace").unwrap();
+            sim.focus("Start without a project").unwrap();
+        });
+    }
+
     #[test]
     fn traverses_children_and_imports_the_displayed_directory() {
         let tmp = Fixture::new();
@@ -1210,7 +1231,7 @@ mod ui_tests {
         Profile::new(&profile).complete_onboarding().unwrap();
         let mut app = application(Some(profile.clone()), Some(home), "Fixture".into()).unwrap();
         interact(&mut app, |sim| {
-            sim.click("＋ Add project").unwrap();
+            sim.click("Add project").unwrap();
             sim.click("Local folder").unwrap();
             sim.click("Category").unwrap();
             sim.click("Browsable project").unwrap();

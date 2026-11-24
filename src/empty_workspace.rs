@@ -1,5 +1,6 @@
 //! Native empty workspace, matched against the pinned Linux desktop reference.
 
+use crate::settings_icons::icon;
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use incular::prelude::*;
 
@@ -16,9 +17,10 @@ pub fn view(
     scratch_available: bool,
     open_scratch: impl Fn() + 'static,
     open_project: impl Fn() + Clone + 'static,
+    open_settings: impl Fn() + 'static,
 ) -> Widget {
     let mut buttons = vec![project_button(
-        "＋ Add project",
+        "Add project",
         116.0,
         28.0,
         BLUE,
@@ -28,10 +30,19 @@ pub fn view(
     if scratch_available {
         buttons.push(SizedBox::new().width(8.0).into());
         buttons.push(
-            Button::new("Start without a project")
-                .style(style(28.0, WHITE, INK).fixed_size(Size::new(186.0, 28.0)))
-                .on_click(open_scratch)
-                .into(),
+            Button::with_child(
+                "Start without a project",
+                icon_label(
+                    "message-square-dashed",
+                    16.0,
+                    "Start without a project",
+                    14.0,
+                    INK,
+                ),
+            )
+            .style(style(28.0, WHITE, INK).fixed_size(Size::new(186.0, 28.0)))
+            .on_click(open_scratch)
+            .into(),
         );
     }
     let hero = Column::new(vec![
@@ -54,7 +65,14 @@ pub fn view(
     ])
     .main_axis_size(MainAxisSize::Min);
     Row::new(vec![
-        sidebar(None, Some(open_project), None::<fn()>, None, Vec::new()),
+        sidebar(
+            None,
+            Some(open_project),
+            None::<fn()>,
+            open_settings,
+            None,
+            Vec::new(),
+        ),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
@@ -75,6 +93,7 @@ pub(crate) fn sidebar(
     project: Option<&str>,
     open_project: Option<impl Fn() + 'static>,
     new_thread: Option<impl Fn() + 'static>,
+    open_settings: impl Fn() + 'static,
     search_input: Option<Widget>,
     threads: Vec<Widget>,
 ) -> Widget {
@@ -91,23 +110,20 @@ pub(crate) fn sidebar(
         Some(callback) if new_thread.is_some() && project.is_some() => (
             None,
             Some(
-                Button::with_child(
-                    "Add project",
-                    crate::settings_icons::icon("palette-folder-plus", 16.0, MUTED),
-                )
-                .style(
-                    ButtonStyle::new()
-                        .variant(ButtonVariant::Ghost)
-                        .fixed_size(Size::new(28.0, 28.0))
-                        .background(SIDEBAR),
-                )
-                .on_click(callback)
-                .into(),
+                Button::with_child("Add project", icon("folder-plus", 16.0, MUTED))
+                    .style(
+                        ButtonStyle::new()
+                            .variant(ButtonVariant::Ghost)
+                            .fixed_size(Size::new(28.0, 28.0))
+                            .background(SIDEBAR),
+                    )
+                    .on_click(callback)
+                    .into(),
             ),
         ),
         Some(callback) => (
             Some(project_button(
-                "＋ Add project",
+                "Add project",
                 96.0,
                 26.0,
                 SIDEBAR,
@@ -126,13 +142,13 @@ pub(crate) fn sidebar(
                 .child(field),
         )
     } else {
-        line("⌕   Search", 48.0, MUTED)
+        line(icon_label("search", 16.0, "Search", 14.0, MUTED), 48.0)
     };
     let search = if let Some(callback) = new_thread {
         let mut controls = vec![Widget::from(Expanded::new(search_field))];
         controls.extend(header_add);
         controls.extend([
-            Button::with_child("New thread", label("✎", 16.0, FontWeight::W500, MUTED))
+            Button::with_child("New thread", icon("square-pen", 16.0, MUTED))
                 .style(
                     ButtonStyle::new()
                         .variant(ButtonVariant::Ghost)
@@ -153,7 +169,17 @@ pub(crate) fn sidebar(
         .width(255.0)
         .color(SIDEBAR)
         .child(Column::new(vec![
-            line("◧    Butler   ‹   ›", 40.0, INK),
+            line(
+                Row::new(vec![
+                    label("Butler", 14.0, FontWeight::W500, INK),
+                    SizedBox::new().width(8.0).into(),
+                    toolbar_glyph("arrow-left", 14.0, FAINT),
+                    toolbar_glyph("arrow-right", 14.0, FAINT),
+                ])
+                .main_axis_size(MainAxisSize::Min)
+                .into(),
+                40.0,
+            ),
             search,
             space(24.0),
             label(empty_caption, 12.0, FontWeight::W400, FAINT),
@@ -165,18 +191,34 @@ pub(crate) fn sidebar(
                     .cross_axis_alignment(CrossAxisAlignment::Stretch),
             ))
             .into(),
-            line("⚙     ⑂     ⊙     ▥", 48.0, MUTED),
+            line(
+                Row::new(vec![
+                    Button::with_child("Settings", icon("settings", 16.0, MUTED))
+                        .style(
+                            ButtonStyle::new()
+                                .variant(ButtonVariant::Ghost)
+                                .fixed_size(Size::new(28.0, 28.0))
+                                .background(SIDEBAR),
+                        )
+                        .on_click(open_settings)
+                        .into(),
+                    toolbar_glyph("chart-no-axes-column", 16.0, MUTED),
+                ])
+                .main_axis_size(MainAxisSize::Min)
+                .into(),
+                48.0,
+            ),
         ]))
         .into()
 }
 
-fn line(text: &str, height: f32, color: Color) -> Widget {
+fn line(child: Widget, height: f32) -> Widget {
     Container::new()
         .width(255.0)
         .height(height)
         .padding(EdgeInsets::symmetric(16.0, 0.0))
         .alignment(Alignment::CENTER_LEFT)
-        .child(label(text, 14.0, FontWeight::W500, color))
+        .child(child)
         .into()
 }
 
@@ -188,23 +230,53 @@ fn project_button(
     ink: Color,
     click: impl Fn() + 'static,
 ) -> Widget {
-    Button::new(text)
-        .style(
-            style(height, background, ink)
-                .variant(if width == 116.0 {
-                    ButtonVariant::Primary
-                } else {
-                    ButtonVariant::Ghost
-                })
-                .fixed_size(Size::new(width, height))
-                .text_style(
-                    TextStyle::new()
-                        .font_family("Liberation Sans")
-                        .font_size(if width < 100.0 { 11.0 } else { 14.0 }),
-                ),
-        )
-        .on_click(click)
+    Button::with_child(
+        text,
+        icon_label(
+            "plus",
+            if width < 100.0 { 12.0 } else { 16.0 },
+            text,
+            if width < 100.0 { 12.0 } else { 14.0 },
+            ink,
+        ),
+    )
+    .style(
+        style(height, background, ink)
+            .variant(if width == 116.0 {
+                ButtonVariant::Primary
+            } else {
+                ButtonVariant::Ghost
+            })
+            .fixed_size(Size::new(width, height)),
+    )
+    .on_click(click)
+    .into()
+}
+
+fn toolbar_glyph(name: &str, size: f32, color: Color) -> Widget {
+    Container::new()
+        .width(28.0)
+        .height(28.0)
+        .alignment(Alignment::CENTER)
+        .child(icon(name, size, color))
         .into()
+}
+
+pub(crate) fn icon_label(
+    name: &str,
+    size: f32,
+    text: &str,
+    text_size: f32,
+    color: Color,
+) -> Widget {
+    Row::new(vec![
+        icon(name, size, color),
+        SizedBox::new().width(6.0).into(),
+        label(text, text_size, FontWeight::W500, color),
+    ])
+    .main_axis_size(MainAxisSize::Min)
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .into()
 }
 
 fn style(height: f32, background: Color, ink: Color) -> ButtonStyle {
