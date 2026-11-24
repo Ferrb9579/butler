@@ -104,7 +104,8 @@ capture_one() (
       assert_provider_gate "$window" "$out/t3-scratch-draft.png"
       xdotool windowfocus "$window" mousemove --window "$window" 800 424 click 1
       xdotool mousemove 1390 890
-      if ! await_text "$window" "$out/t3-provider-settings.png" 'Add provider|Refresh provider status'; then
+      if ! await_text "$window" "$out/t3-provider-settings.png" 'Add provider|Refresh provider status' ||
+         ! assert_disabled_cursor "$window" "$out/t3-provider-settings.png"; then
         touch "$out/t3-provider-settings-unverified"
       fi
     else
@@ -132,6 +133,7 @@ capture_one() (
     xdotool windowfocus "$window" mousemove --window "$window" 800 424 click 1
     xdotool mousemove 1390 890
     await_text "$window" "$out/butler-provider-settings.png" 'Display[[:space:]]*name'
+    assert_disabled_cursor "$window" "$out/butler-provider-settings.png"
   elif [[ "$name" == butler-import ]]; then
     xdotool windowfocus "$window" mousemove --window "$window" 670 462 click 1
     xdotool mousemove 1390 890
@@ -156,7 +158,7 @@ await_text() {
   local -a image_options ocr_options
   if [[ -n "$crop" ]]; then
     image_options=(-crop "$crop" +repage -resize 350%)
-    if [[ "$crop" == '465x103+535+355' ]]; then
+    if [[ "$crop" == '465x103+535+355' || "$crop" == '190x85+620+265' ]]; then
       ocr_options=(--psm 6)
     else
       ocr_options=(--psm 7)
@@ -177,6 +179,12 @@ await_text() {
   done
   printf 'Expected text "%s" in %s; last recognized text:\n%s\n' "$expected" "$file" "$actual" >&2
   return 1
+}
+
+assert_disabled_cursor() {
+  local window=$1 file=$2
+  # Read the editor's status, not a different provider's list label.
+  await_text "$window" "$file" '^[[:space:]]*Disabled[[:space:]]*$' '190x85+620+265'
 }
 
 assert_provider_gate() {
