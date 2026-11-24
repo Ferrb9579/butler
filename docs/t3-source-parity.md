@@ -87,5 +87,7 @@ keyboard focus restoration, and close animation are not implemented here.
   and identifies Butler truthfully in the generated README. Only the current
   device is supported. The local Git subprocesses run without arbitrary
   repository hooks, filters, templates, signing, or remote calls.
-  Git processes have finite deadlines, but the local create callback still
-  runs synchronously; the in-progress UI and cancellation are not ported.
+  Butler now runs the bounded create off the UI thread using the framework's
+  owner-scoped task primitive. The input's trailing Create/Enter control shows
+  Creating and rejects duplicates until completion. Cancel and reference-only
+  publishing flows are not ported.

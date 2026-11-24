@@ -65,7 +65,7 @@ capture_one() (
   xdotool windowmove "$window" 0 0 windowsize "$window" "$width" "$height"
   xdotool mousemove 1390 890
   sleep 3
-  if [[ "$name" == t3 || "$name" == butler ]]; then
+  if [[ "$name" == t3 || "$name" == t3-new-project-form || "$name" == butler ]]; then
     await_text "$window" "$out/$name-startup.png" 'Start without an agent' '240x42+270+601'
   elif [[ "$name" == butler-project-reopened ]]; then
     await_text "$window" "$out/$name-startup.png" 'ParityFixture'
@@ -117,6 +117,8 @@ capture_one() (
     else
       touch "$out/t3-landing-unverified"
     fi
+  elif [[ "$name" == t3-new-project-form ]]; then
+    capture_reference_new_project_form "$window"
   elif [[ "$name" == butler && "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
     # Coordinates refer to the fixed-size Welcome fixture captured above.
     # Check durable state and a rendered route, not only a successful X11 click.
@@ -436,6 +438,84 @@ verify_native_new_project() {
   echo 'Native New project creation, local Git scaffold, and title after restart verified'
 }
 
+await_reference_project_form() {
+  local window=$1 file=$2 input=$3 destination=$4 tick coords
+  # Project name is unique to the pinned New project form. Confirm the
+  # destination preview in the same frame so a similarly named row is not
+  # mistaken for a focusable input or a completed name change.
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$file" || return 1
+    coords=$(settings_phrase "$file" '510x40+390+84' "$input" 7) || coords=
+    if [[ -n "$coords" ]] && settings_phrase "$file" '574x190+353+125' "$destination" >/dev/null; then
+      printf '%s\n' "$coords"
+      return 0
+    fi
+    sleep 0.4
+  done
+  printf 'Could not verify the T3 New project form (%s and %s) in %s\n' "$input" "$destination" "$file" >&2
+  return 1
+}
+
+capture_reference_new_project_form() {
+  local window=$1 coords x y
+  # Only open the local form in this fresh T3 profile. Never activate Create,
+  # send a prompt, or open a provider/remote repository option.
+  click_project_control "$window" "$out/t3-create-project-welcome.png" \
+    '240x42+270+601' 'Start without an agent' 7 || return 1
+  click_project_control "$window" "$out/t3-create-project-landing.png" \
+    '160x40+604+442' 'Add project' 7 || return 1
+  click_project_control "$window" "$out/t3-create-project-sources.png" \
+    '574x240+353+81' 'New project' 11 || return 1
+  [[ -n "${T3CODE_HOME:-}" && ! -e "$T3CODE_HOME/projects/$new_project_slug" ]] || return 1
+  coords=$(await_reference_project_form "$window" "$out/t3-create-project-name.png" \
+    'Project name' 'Goes in') || return 1
+  rm -f -- "$out/t3-create-project-name-unverified"
+  read -r x y <<<"$coords"
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 || return 1
+  xdotool type --clearmodifiers "$new_project_title" || return 1
+  xdotool mousemove 1390 890 || return 1
+  await_reference_project_form "$window" "$out/t3-create-project-named.png" \
+    "$new_project_title" 'Creates' >/dev/null || return 1
+  if [[ -e "$T3CODE_HOME/projects/$new_project_slug" ]]; then
+    echo 'T3 New project was unexpectedly written; do not use the comparison frames' >&2
+    touch "$out/t3-create-project-name-unverified"
+    return 1
+  fi
+  rm -f -- "$out/t3-create-project-named-unverified"
+}
+
+verify_reference_new_project_form() {
+  local profile='t3-new-project-form' capture_rc state
+  local notes="$out/new-project-form-capture-notes.txt"
+  touch "$out/t3-create-project-name-unverified" "$out/t3-create-project-named-unverified"
+  printf '%s\n' \
+    'Fresh native X11 local New project forms, empty and with the same typed title: Native Created Project.' \
+    'The reference form was not submitted. The Butler creation/restart smoke is separate.' \
+    'The two apps use different temporary profile and project roots; path previews and raw diffs are diagnostic, not parity claims.' \
+    'See provenance.txt for exact builds; any *-unverified marker means the associated frame or pair is diagnostic only.' \
+    >"$notes"
+  set +e
+  T3CODE_HOME="$tmp/$profile/home" CAPTURE_PROFILE="$profile" capture_one "$profile" "$t3/AppRun"
+  capture_rc=$?
+  set -e
+  if (( capture_rc != 0 )); then
+    echo 'Optional T3 New project form capture incomplete; see t3-create-project-*-unverified markers' \
+      | tee -a "$notes" >&2
+  fi
+  for state in name named; do
+    if [[ "${VERIFY_BUTLER_NEW_PROJECT:-0}" == 1 && ! -e "$out/butler-create-project-unverified" &&
+          ! -e "$out/t3-create-project-$state-unverified" &&
+          -f "$out/t3-create-project-$state.png" && -f "$out/butler-create-project-$state.png" ]] &&
+       compare_frames "t3-create-project-$state" "butler-create-project-$state" "new-project-form-$state"; then
+      rm -f -- "$out/new-project-form-$state-pair-unverified"
+      printf 'New project form %s: verified route pair (raw diagnostic diff)\n' "$state" | tee -a "$notes"
+    else
+      touch "$out/new-project-form-$state-pair-unverified"
+      printf 'New project form %s: optional pair not verified\n' "$state" | tee -a "$notes" >&2
+    fi
+  done
+}
+
 set +e
 capture_one t3 "$t3/AppRun"
 reference_rc=$?
@@ -515,4 +595,7 @@ if [[ -e "$out/t3-landing-unverified" ]]; then
 fi
 if [[ "${VERIFY_BUTLER_NEW_PROJECT:-0}" == 1 ]]; then
   verify_native_new_project
+fi
+if [[ "${CAPTURE_T3_NEW_PROJECT_FORM:-0}" == 1 ]]; then
+  verify_reference_new_project_form
 fi

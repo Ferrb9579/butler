@@ -31,6 +31,7 @@ pub fn overlay(
     new_name: TextEditingController,
     name_preview: Signal<String>,
     project_data: Option<PathBuf>,
+    creating: bool,
     home: Option<PathBuf>,
     browse: Signal<Option<FolderListing>>,
     browse_error: Signal<Option<String>>,
@@ -43,10 +44,55 @@ pub fn overlay(
     }
     let back = step.clone();
     let close = step.clone();
+    let header_create: Widget = if current == Picker::New {
+        let name = name_preview.get();
+        let allow_create = !creating
+            && project_data
+                .as_ref()
+                .is_some_and(|base| managed_projects::preview_root(base, &name).is_ok());
+        let controller = new_name.clone();
+        let submit = submit.clone();
+        let text = if creating { "Creating" } else { "Create" };
+        Button::with_child(
+            "Create (Enter)",
+            Row::new(vec![
+                label(text, 12.0, FontWeight::W500, INK),
+                Container::new()
+                    .height(16.0)
+                    .padding(EdgeInsets::symmetric(4.0, 0.0))
+                    .alignment(Alignment::CENTER)
+                    .decoration(
+                        BoxDecoration::new()
+                            .color(Color::rgba(24, 24, 27, 18))
+                            .border_radius(BorderRadius::all(Radius::circular(4.0))),
+                    )
+                    .child(label("Enter", 10.0, FontWeight::W400, MUTED))
+                    .into(),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .spacing(6.0)
+            .into(),
+        )
+        .style(
+            ButtonStyle::new()
+                .variant(ButtonVariant::Outline)
+                .height(24.0)
+                .padding(EdgeInsets::symmetric(6.0, 0.0)),
+        )
+        .enabled(allow_create)
+        .on_click(move || submit(ProjectRequest::Create(controller.text())))
+        .into()
+    } else {
+        SizedBox::new().width(0.0).into()
+    };
     let mut rows = vec![row(
         48.0,
         Row::new(vec![
             short_action("‹", move || {
+                if creating {
+                    return;
+                }
                 back.set(if matches!(current, Picker::Local | Picker::New) {
                     Picker::Sources
                 } else {
@@ -60,13 +106,14 @@ pub fn overlay(
                 Expanded::new(
                     EditableText::new(new_name.clone())
                         .placeholder("Project name")
+                        .read_only(creating)
                         .placeholder_color(MUTED)
                         .style(crate::typography::interface().font_size(15.0).color(INK))
                         .on_changed(move |value| {
                             preview.set(value.to_owned());
                         })
                         .on_submit(move |value| {
-                            if !value.trim().is_empty() {
+                            if !creating && !value.trim().is_empty() {
                                 submit(ProjectRequest::Create(value));
                             }
                         }),
@@ -88,6 +135,7 @@ pub fn overlay(
             } else {
                 label("Search...", 14.0, FontWeight::W400, MUTED)
             },
+            header_create,
         ])
         .cross_axis_alignment(CrossAxisAlignment::Center),
     )];
@@ -247,35 +295,18 @@ pub fn overlay(
                     )
                 })
                 .unwrap_or_else(|| "No local profile directory".into());
-            let allow_create = project_data
-                .as_ref()
-                .is_some_and(|base| managed_projects::preview_root(base, &name).is_ok());
-            let create = Button::new("Create")
-                .style(
-                    ButtonStyle::new()
-                        .variant(ButtonVariant::Outline)
-                        .height(28.0)
-                        .text_style(crate::typography::interface().font_size(14.0)),
-                )
-                .enabled(allow_create)
-                .on_click(move || submit(ProjectRequest::Create(new_name.text())));
             rows.push(row(
                 52.0,
-                Row::new(vec![
-                    Widget::from(Expanded::new(source(
-                        "＋",
-                        if name.trim().is_empty() {
-                            "New project"
-                        } else {
-                            name.trim()
-                        },
-                        &location,
-                        true,
-                    ))),
-                    create.into(),
-                ])
-                .spacing(12.0)
-                .cross_axis_alignment(CrossAxisAlignment::Center),
+                source(
+                    "＋",
+                    if name.trim().is_empty() {
+                        "New project"
+                    } else {
+                        name.trim()
+                    },
+                    &location,
+                    true,
+                ),
             ));
             let existing = step.clone();
             rows.push(
@@ -292,7 +323,9 @@ pub fn overlay(
                 .size(Size::new(574.0, 48.0))
                 .hover_color(Color::rgba(241, 241, 244, 255))
                 .on_press(move || {
-                    existing.set(Picker::Sources);
+                    if !creating {
+                        existing.set(Picker::Sources);
+                    }
                 })
                 .into(),
             );
@@ -316,7 +349,9 @@ pub fn overlay(
         row(
             40.0,
             short_action("Close", move || {
-                close.set(Picker::Closed);
+                if !creating {
+                    close.set(Picker::Closed);
+                }
             }),
         ),
     ]);
@@ -355,20 +390,25 @@ pub fn overlay(
 }
 
 fn source(icon: &str, title: &str, description: &str, ready: bool) -> Widget {
+    let line = |text, size, ink| {
+        Widget::from(
+            Text::new(text)
+                .style(crate::typography::interface().font_size(size).color(ink))
+                .max_lines(Some(1))
+                .overflow(TextOverflow::Ellipsis),
+        )
+    };
     Row::new(vec![
         label(icon, 16.0, FontWeight::W400, MUTED),
         SizedBox::new().width(8.0).into(),
-        Column::new(vec![
-            label(
-                title,
-                15.0,
-                FontWeight::W400,
-                if ready { INK } else { MUTED },
-            ),
-            label(description, 13.0, FontWeight::W400, MUTED),
-        ])
-        .main_axis_size(MainAxisSize::Min)
-        .cross_axis_alignment(CrossAxisAlignment::Start)
+        Expanded::new(
+            Column::new(vec![
+                line(title, 14.0, if ready { INK } else { MUTED }),
+                line(description, 12.0, MUTED),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Start),
+        )
         .into(),
     ])
     .cross_axis_alignment(CrossAxisAlignment::Center)

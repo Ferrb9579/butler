@@ -13,14 +13,16 @@ use butler::{
     managed_projects,
     onboarding::{Route, StartupEvidence},
     profile::Profile,
-    projects::{FolderListing, LocalProjects},
+    projects::{FolderListing, LocalProject, LocalProjects},
     threads::{Conversation, ThreadStore, Workspace},
 };
 use incular::prelude::*;
 use project_picker::{Picker, ProjectRequest};
 use std::{
+    cell::Cell,
     env,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -80,6 +82,8 @@ fn application(
     let path = TextEditingController::new();
     let new_project_name = TextEditingController::new();
     let new_project_preview = Signal::new(String::new());
+    let pending_project_name = Signal::new(None::<String>);
+    let create_started = Rc::new(Cell::new(false));
     let completed = profile
         .as_ref()
         .map(Profile::onboarding_completed)
@@ -109,7 +113,7 @@ fn application(
         initial_logical_size: Size::new(1280.0, 800.0),
         ..options
     };
-    let app = Application::new_with_options(options, move |_cx| {
+    let app = Application::new_with_options(options, move |cx| {
         let root = if route.get() == Route::Welcome {
             let route = route.clone();
             let error_signal = error.clone();
@@ -244,6 +248,69 @@ fn application(
             let selected_thread = selected_thread.clone();
             #[cfg(test)]
             let fixture_for_project = fixture.clone();
+            let finish_project = move |result: std::io::Result<(LocalProject, Option<String>)>,
+                                       creating: bool| {
+                match result {
+                    Ok((project, warning)) => {
+                        error.set(None);
+                        let refreshed = history_store
+                            .as_ref()
+                            .map(|store| store.history(&Workspace::Local(project.root.clone())))
+                            .transpose();
+                        history_error.set(
+                            refreshed
+                                .as_ref()
+                                .err()
+                                .map(|e| format!("Could not read threads: {e}"))
+                                .or_else(|| {
+                                    warning.map(|message| {
+                                        format!(
+                                            "Project created without an initial commit: {message}"
+                                        )
+                                    })
+                                }),
+                        );
+                        thread_history.set(refreshed.ok().flatten().unwrap_or_default());
+                        #[cfg(test)]
+                        fixture_for_project.reset();
+                        selected_thread.set(None);
+                        active_project.set(Some(project));
+                        step.set(Picker::Closed);
+                    }
+                    Err(e) => {
+                        error.set(Some(if creating {
+                            format!("Could not create project: {e}")
+                        } else {
+                            format!("Could not open folder: {e}")
+                        }));
+                    }
+                }
+            };
+            let queued_creation = pending_project_name.get();
+            let creating = queued_creation.is_some();
+            if let Some(name) = queued_creation
+                && !create_started.replace(true)
+            {
+                let store = projects.clone();
+                let pending = pending_project_name.clone();
+                let started = create_started.clone();
+                let finish = finish_project.clone();
+                cx.spawn_blocking(
+                    move || register_managed_project(store.as_ref(), &name),
+                    move |result, _| {
+                        started.set(false);
+                        pending.set(None);
+                        finish(
+                            result.unwrap_or_else(|error| {
+                                Err(std::io::Error::other(format!("{error:?}")))
+                            }),
+                            true,
+                        );
+                    },
+                );
+            }
+            let pending = pending_project_name.clone();
+            let clear_error = picker_error.clone();
             let desktop = project_picker::overlay(
                 workspace,
                 picker.clone(),
@@ -251,59 +318,31 @@ fn application(
                 new_project_name.clone(),
                 new_project_preview.clone(),
                 projects.as_ref().map(|store| store.data_dir().to_owned()),
+                creating,
                 home.clone(),
                 browse.clone(),
                 browse_error.clone(),
                 picker_error.get(),
                 move |request| {
-                    let creating = matches!(request, ProjectRequest::Create(_));
-                    let result = projects
-                        .as_ref()
-                        .ok_or_else(|| {
-                            std::io::Error::other("No local profile directory is available.")
-                        })
-                        .and_then(|store| match request {
-                            ProjectRequest::Open(input) => {
-                                store.open(Path::new(&input)).map(|project| (project, None))
-                            }
-                            ProjectRequest::Create(name) => {
-                                let created = managed_projects::create(store.data_dir(), &name)?;
-                                let project = store.open_named(&created.root, &created.title).map_err(|error| {
-                                    std::io::Error::new(
-                                        error.kind(),
-                                        format!("Git folder created at {} but could not be registered: {error}", created.root.display())
-                                    )
-                                })?;
-                                Ok((project, created.warning))
-                            }
-                        });
-                    match result {
-                        Ok((project, warning)) => {
-                            error.set(None);
-                            let refreshed = history_store
-                                .as_ref()
-                                .map(|store| store.history(&Workspace::Local(project.root.clone())))
-                                .transpose();
-                            history_error.set(
-                                refreshed
-                                    .as_ref()
-                                    .err()
-                                    .map(|e| format!("Could not read threads: {e}"))
-                                    .or_else(|| warning.map(|message| format!("Project created without an initial commit: {message}"))),
-                            );
-                            thread_history.set(refreshed.ok().flatten().unwrap_or_default());
-                            #[cfg(test)]
-                            fixture_for_project.reset();
-                            selected_thread.set(None);
-                            active_project.set(Some(project));
-                            step.set(Picker::Closed);
+                    if pending.get().is_some() {
+                        return;
+                    }
+                    match request {
+                        ProjectRequest::Create(name) => {
+                            clear_error.set(None);
+                            pending.set(Some(name));
                         }
-                        Err(e) => {
-                            error.set(Some(if creating {
-                                format!("Could not create project: {e}")
-                            } else {
-                                format!("Could not open folder: {e}")
-                            }));
+                        ProjectRequest::Open(input) => {
+                            let result = projects
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    std::io::Error::other(
+                                        "No local profile directory is available.",
+                                    )
+                                })
+                                .and_then(|store| store.open(Path::new(&input)))
+                                .map(|project| (project, None));
+                            finish_project(result, false);
                         }
                     }
                 },
@@ -329,6 +368,27 @@ fn application(
         Directionality::new(TextDirection::Ltr, root).into()
     })?;
     Ok(app)
+}
+
+fn register_managed_project(
+    store: Option<&LocalProjects>,
+    name: &str,
+) -> std::io::Result<(LocalProject, Option<String>)> {
+    let store =
+        store.ok_or_else(|| std::io::Error::other("No local profile directory is available."))?;
+    let created = managed_projects::create(store.data_dir(), name)?;
+    let project = store
+        .open_named(&created.root, &created.title)
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "Git folder created at {} but could not be registered: {error}",
+                    created.root.display()
+                ),
+            )
+        })?;
+    Ok((project, created.warning))
 }
 
 fn local_home() -> Option<PathBuf> {
@@ -523,6 +583,7 @@ mod ui_tests {
         let worker = thread::spawn(move || test(simulation));
         for _ in 0..2500 {
             app.process_simulation_requests();
+            app.process_runtime_work_at(std::time::Instant::now());
             if worker.is_finished() {
                 return worker.join().unwrap();
             }
@@ -558,7 +619,13 @@ mod ui_tests {
             sim.focus("Project name").unwrap();
             sim.type_text("Café Build").unwrap();
             sim.press("Enter".parse().unwrap()).unwrap();
-            sim.focus("Open provider settings").unwrap();
+            for _ in 0..100 {
+                if sim.focus("Open provider settings").is_ok() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            panic!("created project did not activate");
         });
         let projects = LocalProjects::new(&state).list().unwrap();
         assert_eq!(projects.len(), 1);
