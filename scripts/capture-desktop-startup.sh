@@ -848,10 +848,11 @@ thread_find_row_crop() {
 thread_find_transcript() {
   local app=$1 file=$2 crop='940x718+281+43' psm=11
   if [[ "$app" == butler ]]; then
-    # Original 45393540028 transcript/open/match frames place these two
-    # lines here. Sparse OCR over the full pane failed once Find appeared.
-    crop='425x58+291+45'
-    psm=6
+    # The saved user bubble is now flush right in the lane, and the reply
+    # stays left. Verify separate message regions, both outside the Find bar.
+    settings_phrase "$file" '440x86+540+43' 'Does the release open' 11 >/dev/null &&
+      settings_phrase "$file" '425x85+291+89' 'The release opens and shows this thread' 11 >/dev/null
+    return
   fi
   settings_phrase "$file" "$crop" 'Does the release open' "$psm" >/dev/null &&
     settings_phrase "$file" "$crop" 'The release opens and shows this thread' "$psm" >/dev/null

@@ -273,6 +273,7 @@ pub fn draft(
                                 .child(Container::new().width(composer_width).child(transcript(
                                     turn,
                                     jump.as_ref(),
+                                    composer_width,
                                     #[cfg(test)]
                                     offline.clone(),
                                 )))
@@ -475,6 +476,7 @@ fn offline_composer(title: &str, draft: OfflineDraft) -> Widget {
 fn transcript(
     turn: &Conversation,
     jump: Option<&Jump>,
+    lane_width: f32,
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
     let mut messages = Vec::new();
@@ -484,21 +486,27 @@ fn transcript(
             .map(|exchange| (&exchange.prompt, &exchange.reply)),
     );
     for (index, (prompt, reply)) in pairs.enumerate() {
-        let row = |body, weight, role| match jump.filter(|jump| {
-            jump.target()
-                == Some(Message {
-                    exchange: index,
-                    source: role,
-                })
-        }) {
-            Some(jump) => marked_message(body, weight, jump),
-            None => label(body, 14.0, weight, INK),
+        let row = |body: &str, role| {
+            let active = jump.filter(|jump| {
+                jump.target()
+                    == Some(Message {
+                        exchange: index,
+                        source: role,
+                    })
+            });
+            if role == MessageSource::User {
+                user_message(body, lane_width, active)
+            } else if let Some(active) = active {
+                marked_message(body, assistant_message_style(), active).with_key(active.key)
+            } else {
+                Widget::from(Text::new(body).style(assistant_message_style()))
+            }
         };
         messages.extend([
             space(16.0),
-            row(prompt.as_str(), FontWeight::W500, MessageSource::User),
+            row(prompt.as_str(), MessageSource::User),
             space(12.0),
-            row(reply.as_str(), FontWeight::W400, MessageSource::Assistant),
+            row(reply.as_str(), MessageSource::Assistant),
         ]);
     }
     let scroll = Expanded::new(SingleChildScrollView::new(
@@ -533,30 +541,123 @@ fn transcript(
         .into()
 }
 
-fn marked_message(body: &str, weight: FontWeight, jump: &Jump) -> Widget {
+const USER_MESSAGE_SURFACE: Color = Color::rgba(235, 235, 237, 255);
+
+fn assistant_message_style() -> TextStyle {
+    TextStyle::new()
+        .font_family("Liberation Sans")
+        .font_size(14.0)
+        .color(INK)
+}
+
+fn user_message(body: &str, lane_width: f32, active: Option<&Jump>) -> Widget {
+    // Pinned TimelineUserMessageRow.tsx plain text path: max-w-[80%],
+    // rounded-2xl, p-3 and bg-message. Folded/attachment variants are separate.
+    let style = crate::typography::interface()
+        .font_size(14.0)
+        .line_height_absolute(22.75)
+        .font_weight(FontWeight::W400)
+        .color(Color::rgba(24, 24, 27, 255));
+    let child = match active {
+        Some(jump) => marked_message(body, style, jump),
+        None => Text::new(body).style(style).soft_wrap(true).into(),
+    };
+    let bubble: Widget = Container::new()
+        .padding(EdgeInsets::all(12.0))
+        .decoration(
+            BoxDecoration::new()
+                .color(USER_MESSAGE_SURFACE)
+                .border_radius(BorderRadius::circular(16.0)),
+        )
+        .child(child)
+        .into();
+    let bubble = match active {
+        Some(jump) => bubble.with_key(jump.key),
+        None => bubble,
+    };
+    Align::new(
+        Alignment::CENTER_RIGHT,
+        ConstrainedBox::new(
+            Constraints::new(0.0, lane_width * 0.8, 0.0, f32::INFINITY),
+            bubble,
+        ),
+    )
+    .into()
+}
+
+fn marked_message(body: &str, base: TextStyle, jump: &Jump) -> Widget {
     let Some((range, matched)) = jump
         .occurrence()
         .map(|m| &m.range)
         .and_then(|range| body.get(range.clone()).map(|matched| (range, matched)))
     else {
-        return label(body, 14.0, weight, INK).with_key(jump.key);
+        return Text::new(body).style(base).into();
     };
-    let base = TextStyle::new()
-        .font_family("Liberation Sans")
-        .font_size(14.0)
-        .font_weight(weight)
-        .color(INK);
     let active = base
         .clone()
         .color(Color::rgba(33, 24, 10, 255))
         .background_color(Color::rgba(238, 165, 43, 255));
-    let paragraph: Widget = RichText::new(TextSpan::empty().style(base).children([
+    RichText::new(TextSpan::empty().style(base).children([
         TextSpan::new(&body[..range.start]),
         TextSpan::new(matched).style(active),
         TextSpan::new(&body[range.end..]),
     ]))
-    .into();
-    paragraph.with_key(jump.key)
+    .into()
+}
+
+#[cfg(test)]
+#[test]
+fn saved_user_bubbles_fit_content_and_wrap_at_the_source_width() {
+    use incular::core::Transform;
+    use incular::rendering::{Brush, PaintCommand};
+    use incular::runtime::Runtime;
+
+    let lane = 400.0;
+    let widget = Directionality::new(
+        TextDirection::Ltr,
+        Column::new([
+            user_message("Short prompt", lane, None),
+            user_message(&"A saved prompt with spaces. ".repeat(8), lane, None),
+        ])
+        .cross_axis_alignment(CrossAxisAlignment::Stretch),
+    );
+    let mut runtime = Runtime::new(widget.into()).unwrap();
+    let (display, _) = runtime
+        .run_frame(Constraints::tight(Size::new(lane, 320.0)))
+        .unwrap();
+    let mut transforms = vec![Transform::IDENTITY];
+    let mut boxes = Vec::new();
+    for command in display.commands() {
+        match command {
+            PaintCommand::PushTransform { transform } => {
+                transforms.push(transforms.last().unwrap().then(*transform));
+            }
+            PaintCommand::PopTransform => {
+                transforms.pop();
+            }
+            PaintCommand::RRect {
+                rrect,
+                brush: Brush::Solid(color),
+            } if *color == USER_MESSAGE_SURFACE => {
+                let pos = transforms
+                    .last()
+                    .unwrap()
+                    .transform_point(rrect.rect.origin);
+                assert_eq!(rrect.radii.top_right, 16.0);
+                boxes.push((pos, rrect.rect.size));
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(boxes.len(), 2);
+    let [(short_position, short), (long_position, long)] = boxes[..] else {
+        unreachable!()
+    };
+    assert!(short.width < 160.0 && short.height >= 46.0, "{short:?}");
+    assert!((310.0..=320.0).contains(&long.width), "{long:?}");
+    assert!(long.height > short.height + 20.0, "{long:?}");
+    assert!((short_position.x + short.width - lane).abs() < 1.0);
+    assert!((long_position.x + long.width - lane).abs() < 1.0);
 }
 
 fn find_bar(
