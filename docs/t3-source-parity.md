@@ -123,3 +123,8 @@ suggested repository leaf. Create & Clone for missing parents,
 SSH/authenticated hosts, cancellation, and the rest of the reference keyboard
 navigation remain open. The New project, Local folder, and Git URL glyphs
 use the original pinned Lucide 0.564.0 geometry (cubic paths for arcs).
+
+The active-workspace sidebar ports the 28 px FolderPlus button from
+`SidebarThreadHeader.tsx:61–173`. It opens the same Add project palette,
+without making project headers switch the active chat. The multi-project
+thread destination chooser and the separate filter are still unported.

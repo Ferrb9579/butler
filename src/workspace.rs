@@ -12,6 +12,7 @@ pub fn draft(
     history: Vec<ThreadSummary>,
     selected: Option<Conversation>,
     history_error: Option<String>,
+    add_project: Option<impl Fn() + 'static>,
     open_thread: impl Fn(uuid::Uuid) + Clone + 'static,
     new_thread: impl Fn() + 'static,
     open_settings: impl Fn() + Clone + 'static,
@@ -49,7 +50,7 @@ pub fn draft(
         .take(72)
         .collect::<String>();
     Row::new(vec![
-        sidebar(project.as_deref(), None::<fn()>, Some(new_thread), threads),
+        sidebar(project.as_deref(), add_project, Some(new_thread), threads),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(

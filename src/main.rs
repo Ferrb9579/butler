@@ -171,6 +171,16 @@ fn application_with_transport(
                 let settings_open = settings_open.clone();
                 let settings_navigation = settings_navigation.clone();
                 let title = project.as_ref().map(|project| project.title());
+                let add_project = title.as_ref().map(|_| {
+                    let picker = picker.clone();
+                    let path = path.clone();
+                    let error = picker_error.clone();
+                    move || {
+                        path.clear();
+                        error.set(None);
+                        picker.set(Picker::Sources);
+                    }
+                });
                 let selected = selected_thread.clone();
                 let new_draft = selected_thread.clone();
                 let store = history_store.clone();
@@ -191,6 +201,7 @@ fn application_with_transport(
                     thread_history.get(),
                     selected_thread.get(),
                     history_error.get(),
+                    add_project,
                     move |id| {
                         let outcome = (|| {
                             let store = store
@@ -880,6 +891,37 @@ mod ui_tests {
             assert!(sim.focus("Project name").is_err());
             sim.focus("＋ Add project").unwrap();
         });
+    }
+
+    #[test]
+    fn active_project_sidebar_can_open_a_second_folder_without_touching_the_first() {
+        let tmp = Fixture::new();
+        let root = tmp.0.join("profile");
+        let first = tmp.0.join("First Project");
+        let second = tmp.0.join("Second Project");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+        Profile::new(&root).complete_onboarding().unwrap();
+        LocalProjects::new(&root).open(&first).unwrap();
+        let second_path = second.to_string_lossy().into_owned();
+        let mut app =
+            application(Some(root.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, move |sim| {
+            sim.focus("Add project").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.click("Local folder").unwrap();
+            sim.focus("Absolute folder path").unwrap();
+            sim.type_text(second_path).unwrap();
+            sim.click("Open folder").unwrap();
+            sim.focus("Add project").unwrap();
+        });
+        let list = LocalProjects::new(root).list().unwrap();
+        assert_eq!(
+            list.iter().map(LocalProject::title).collect::<Vec<_>>(),
+            ["Second Project", "First Project"]
+        );
+        assert!(fs::read_dir(first).unwrap().next().is_none());
+        assert!(fs::read_dir(second).unwrap().next().is_none());
     }
 
     #[test]

@@ -86,11 +86,41 @@ pub(crate) fn sidebar(
             "Threads"
         }
     });
-    let action = open_project
-        .map(|callback| project_button("＋ Add project", 96.0, 26.0, SIDEBAR, MUTED, callback));
+    let (action, header_add) = match open_project {
+        Some(callback) if new_thread.is_some() && project.is_some() => (
+            None,
+            Some(
+                Button::with_child(
+                    "Add project",
+                    crate::settings_icons::icon("palette-folder-plus", 16.0, MUTED),
+                )
+                .style(
+                    ButtonStyle::new()
+                        .variant(ButtonVariant::Ghost)
+                        .fixed_size(Size::new(28.0, 28.0))
+                        .background(SIDEBAR),
+                )
+                .on_click(callback)
+                .into(),
+            ),
+        ),
+        Some(callback) => (
+            Some(project_button(
+                "＋ Add project",
+                96.0,
+                26.0,
+                SIDEBAR,
+                MUTED,
+                callback,
+            )),
+            None,
+        ),
+        None => (None, None),
+    };
     let search = if let Some(callback) = new_thread {
-        Row::new(vec![
-            Widget::from(Expanded::new(line("⌕   Search", 48.0, MUTED))),
+        let mut controls = vec![Widget::from(Expanded::new(line("⌕   Search", 48.0, MUTED)))];
+        controls.extend(header_add);
+        controls.extend([
             Button::with_child("New thread", label("✎", 16.0, FontWeight::W500, MUTED))
                 .style(
                     ButtonStyle::new()
@@ -101,9 +131,10 @@ pub(crate) fn sidebar(
                 .on_click(callback)
                 .into(),
             SizedBox::new().width(12.0).into(),
-        ])
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .into()
+        ]);
+        Row::new(controls)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .into()
     } else {
         line("⌕   Search", 48.0, MUTED)
     };
