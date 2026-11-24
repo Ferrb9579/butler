@@ -1,4 +1,5 @@
 pub mod landing;
+pub mod managed_projects;
 pub mod onboarding;
 pub mod profile;
 pub mod projects;

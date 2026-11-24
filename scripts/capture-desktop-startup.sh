@@ -285,7 +285,11 @@ capture_about_settings() {
       rm -f -- "$about_unverified"
       printf '%s: verified the native About route\n' "$app"
       step='find the View licenses button on the About page'
-      if click_settings_phrase "$window" "$probe" '932x636+294+109' 'View licenses' 1120 700; then
+      # The full-body sparse OCR dropped Butler's visible label in
+      # run 45363944626. These button crops were verified on both real frames.
+      local licenses_crop='140x42+1042+637'
+      if [[ "$app" == butler ]]; then licenses_crop='140x42+1042+302'; fi
+      if click_settings_phrase "$window" "$probe" "$licenses_crop" 'View licenses' 1120 700; then
         step='verify the Open source licenses breadcrumb and Third-party notices heading'
         if wait_for_settings_view "$window" "$notices" 'Open source licenses' 'Third-party notices'; then
           rm -f -- "$notices_unverified"

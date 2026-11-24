@@ -71,3 +71,21 @@ The Settings overlay follows the pinned `AppRouteModal.tsx:68–81` pointer
 dismissal: a tap must start on the backdrop and release outside the panel.
 A pointer gesture crossing the panel boundary does not dismiss it. Escape,
 keyboard focus restoration, and close animation are not implemented here.
+
+## Local New project flow
+
+- Pinned `CommandPalette.tsx:1090–1122,2432–2586` supplies the New project
+  source row, Project name field, name/path preview, Create, and Add existing
+  project. Butler opens a blank project draft on local success. Remote targets,
+  publish controls, focus-on-open and exact new form visual parity are pending.
+- Pinned `apps/server/src/project/ManagedProjectFolders.ts:145–215,393–508`,
+  `packages/contracts/src/project.ts:533–544`, and
+  `packages/shared/src/path.ts:69–120` specify project name validation,
+  normalization and suffixing, Git branch/setup, README/icon scaffold, and
+  nonfatal initial commit failure. Butler keeps the title separate from its
+  disk slug using its atomic local registry, retains old path-only profiles,
+  and identifies Butler truthfully in the generated README. Only the current
+  device is supported. The local Git subprocesses run without arbitrary
+  repository hooks, filters, templates, signing, or remote calls.
+  Git processes have finite deadlines, but the local create callback still
+  runs synchronously; the in-progress UI and cancellation are not ported.

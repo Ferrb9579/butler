@@ -8,14 +8,19 @@ use std::{
 };
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const TITLE_RECORD: &str = "title\t";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalProject {
     pub root: PathBuf,
+    managed_title: Option<String>,
 }
 
 impl LocalProject {
     pub fn title(&self) -> String {
+        if let Some(title) = &self.managed_title {
+            return title.clone();
+        }
         self.root
             .file_name()
             .unwrap_or(self.root.as_os_str())
@@ -36,6 +41,10 @@ impl LocalProjects {
         }
     }
 
+    pub fn data_dir(&self) -> &Path {
+        &self.state
+    }
+
     /// Last opened project is first. Keep missing entries so removing a drive
     /// temporarily does not silently delete saved projects.
     pub fn list(&self) -> io::Result<Vec<LocalProject>> {
@@ -44,21 +53,52 @@ impl LocalProjects {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(e),
         };
-        raw.lines()
-            .map(|entry| {
-                let root = PathBuf::from(entry);
-                if !root.is_absolute() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "Invalid saved project path.",
-                    ));
-                }
-                Ok(LocalProject { root })
-            })
-            .collect()
+        let mut lines = raw.lines().peekable();
+        let mut projects = Vec::new();
+        while let Some(entry) = lines.next() {
+            let root = PathBuf::from(entry);
+            if !root.is_absolute() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Invalid saved project path.",
+                ));
+            }
+            // Original records are still one absolute path per line. A
+            // named record has an optional following line that cannot be
+            // mistaken for an absolute path; JSON preserves the display text.
+            let managed_title = lines
+                .peek()
+                .and_then(|line| line.strip_prefix(TITLE_RECORD))
+                .map(serde_json::from_str::<String>)
+                .transpose()
+                .map_err(io::Error::other)?;
+            if managed_title.is_some() {
+                lines.next();
+            }
+            projects.push(LocalProject {
+                root,
+                managed_title,
+            });
+        }
+        Ok(projects)
     }
 
     pub fn open(&self, input: &Path) -> io::Result<LocalProject> {
+        self.register(input, None)
+    }
+
+    pub fn open_named(&self, input: &Path, title: &str) -> io::Result<LocalProject> {
+        let title = title.trim();
+        if title.is_empty() || title.encode_utf16().count() > 200 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid project name.",
+            ));
+        }
+        self.register(input, Some(title.to_owned()))
+    }
+
+    fn register(&self, input: &Path, title: Option<String>) -> io::Result<LocalProject> {
         if !input.is_absolute() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -82,7 +122,6 @@ impl LocalProjects {
                 "Unsupported characters in folder path.",
             ));
         }
-        let project = LocalProject { root: canonical };
         fs::create_dir_all(&self.state)?;
         let lock = OpenOptions::new()
             .create(true)
@@ -92,7 +131,17 @@ impl LocalProjects {
             .open(self.state.join("local-projects.lock"))?;
         lock.lock()?;
         let mut projects = self.list()?;
-        projects.retain(|item| item != &project);
+        let managed_title = title.or_else(|| {
+            projects
+                .iter()
+                .find(|item| item.root == canonical)
+                .and_then(|item| item.managed_title.clone())
+        });
+        let project = LocalProject {
+            root: canonical,
+            managed_title,
+        };
+        projects.retain(|item| item.root != project.root);
         projects.insert(0, project.clone());
         self.save(&projects)?;
         Ok(project)
@@ -114,6 +163,9 @@ impl LocalProjects {
             for project in projects {
                 let path = project.root.to_str().expect("validated on read or import");
                 writeln!(file, "{path}")?;
+                if let Some(title) = &project.managed_title {
+                    writeln!(file, "{TITLE_RECORD}{}", serde_json::to_string(title)?)?;
+                }
             }
             file.sync_all()?;
             drop(file);
@@ -153,6 +205,31 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn retains_named_title_when_a_saved_project_is_reopened_by_path() {
+        let tmp = Temp::new();
+        let slug = tmp.0.join("local-demo");
+        let legacy = tmp.0.join("Legacy Project");
+        let state = tmp.0.join("state");
+        fs::create_dir(&slug).unwrap();
+        fs::create_dir(&legacy).unwrap();
+        fs::create_dir(&state).unwrap();
+        let legacy = legacy.canonicalize().unwrap();
+        fs::write(
+            state.join("local-projects"),
+            format!("{}\n", legacy.display()),
+        )
+        .unwrap();
+        let store = LocalProjects::new(&state);
+        let named = store.open_named(&slug, "  Local Démo  ").unwrap();
+        assert_eq!(named.title(), "Local Démo");
+        let list = LocalProjects::new(&state).list().unwrap();
+        assert_eq!(list[0], named);
+        assert_eq!(list[1].title(), "Legacy Project");
+        assert_eq!(store.open(&slug).unwrap(), named);
+        assert_eq!(store.list().unwrap(), list);
     }
 
     #[test]

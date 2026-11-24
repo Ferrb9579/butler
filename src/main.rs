@@ -10,13 +10,14 @@ mod workspace;
 
 use butler::{
     landing::{Landing, resolve_landing},
+    managed_projects,
     onboarding::{Route, StartupEvidence},
     profile::Profile,
     projects::{FolderListing, LocalProjects},
     threads::{Conversation, ThreadStore, Workspace},
 };
 use incular::prelude::*;
-use project_picker::Picker;
+use project_picker::{Picker, ProjectRequest};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -77,6 +78,8 @@ fn application(
     let browse = Signal::new(None::<FolderListing>);
     let browse_error = Signal::new(None::<String>);
     let path = TextEditingController::new();
+    let new_project_name = TextEditingController::new();
+    let new_project_preview = Signal::new(String::new());
     let completed = profile
         .as_ref()
         .map(Profile::onboarding_completed)
@@ -245,19 +248,37 @@ fn application(
                 workspace,
                 picker.clone(),
                 path.clone(),
+                new_project_name.clone(),
+                new_project_preview.clone(),
+                projects.as_ref().map(|store| store.data_dir().to_owned()),
                 home.clone(),
                 browse.clone(),
                 browse_error.clone(),
                 picker_error.get(),
-                move |input| {
+                move |request| {
+                    let creating = matches!(request, ProjectRequest::Create(_));
                     let result = projects
                         .as_ref()
                         .ok_or_else(|| {
                             std::io::Error::other("No local profile directory is available.")
                         })
-                        .and_then(|store| store.open(Path::new(&input)));
+                        .and_then(|store| match request {
+                            ProjectRequest::Open(input) => {
+                                store.open(Path::new(&input)).map(|project| (project, None))
+                            }
+                            ProjectRequest::Create(name) => {
+                                let created = managed_projects::create(store.data_dir(), &name)?;
+                                let project = store.open_named(&created.root, &created.title).map_err(|error| {
+                                    std::io::Error::new(
+                                        error.kind(),
+                                        format!("Git folder created at {} but could not be registered: {error}", created.root.display())
+                                    )
+                                })?;
+                                Ok((project, created.warning))
+                            }
+                        });
                     match result {
-                        Ok(project) => {
+                        Ok((project, warning)) => {
                             error.set(None);
                             let refreshed = history_store
                                 .as_ref()
@@ -267,7 +288,8 @@ fn application(
                                 refreshed
                                     .as_ref()
                                     .err()
-                                    .map(|e| format!("Could not read threads: {e}")),
+                                    .map(|e| format!("Could not read threads: {e}"))
+                                    .or_else(|| warning.map(|message| format!("Project created without an initial commit: {message}"))),
                             );
                             thread_history.set(refreshed.ok().flatten().unwrap_or_default());
                             #[cfg(test)]
@@ -277,7 +299,11 @@ fn application(
                             step.set(Picker::Closed);
                         }
                         Err(e) => {
-                            error.set(Some(format!("Could not open folder: {e}")));
+                            error.set(Some(if creating {
+                                format!("Could not create project: {e}")
+                            } else {
+                                format!("Could not open folder: {e}")
+                            }));
                         }
                     }
                 },
@@ -517,6 +543,39 @@ mod ui_tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn creates_a_managed_project_and_reopens_its_original_title() {
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        Profile::new(&state).complete_onboarding().unwrap();
+        let mut app =
+            application(Some(state.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("＋ Add project").unwrap();
+            sim.click("New project").unwrap();
+            sim.focus("Project name").unwrap();
+            sim.type_text("Café Build").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.focus("Open provider settings").unwrap();
+        });
+        let projects = LocalProjects::new(&state).list().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].title(), "Café Build");
+        assert_eq!(projects[0].root.file_name().unwrap(), "cafe-build");
+        assert!(projects[0].root.join(".git").is_dir());
+        assert!(projects[0].root.join("assets/icon.svg").is_file());
+        assert!(
+            fs::read_to_string(projects[0].root.join("README.md"))
+                .unwrap()
+                .contains("# Café Build")
+        );
+        drop(app);
+        let mut reopened = application(Some(state), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut reopened, |sim| {
+            sim.focus("Open provider settings").unwrap();
+        });
     }
 
     #[test]

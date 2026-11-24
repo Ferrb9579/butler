@@ -6,7 +6,7 @@ use incular::{
     widgets::{BackdropFilter, internal::ActionSurface},
 };
 
-use butler::projects::FolderListing;
+use butler::{managed_projects, projects::FolderListing};
 use std::path::PathBuf;
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, label, space};
@@ -16,17 +16,26 @@ pub enum Picker {
     Closed,
     Sources,
     Local,
+    New,
+}
+
+pub enum ProjectRequest {
+    Open(String),
+    Create(String),
 }
 
 pub fn overlay(
     workspace: Widget,
     step: Signal<Picker>,
     path: TextEditingController,
+    new_name: TextEditingController,
+    name_preview: Signal<String>,
+    project_data: Option<PathBuf>,
     home: Option<PathBuf>,
     browse: Signal<Option<FolderListing>>,
     browse_error: Signal<Option<String>>,
     error: Option<String>,
-    submit: impl Fn(String) + 'static,
+    submit: impl Fn(ProjectRequest) + Clone + 'static,
 ) -> Widget {
     let current = step.get();
     if current == Picker::Closed {
@@ -38,14 +47,32 @@ pub fn overlay(
         48.0,
         Row::new(vec![
             short_action("‹", move || {
-                back.set(if current == Picker::Local {
+                back.set(if matches!(current, Picker::Local | Picker::New) {
                     Picker::Sources
                 } else {
                     Picker::Closed
                 });
             }),
             Widget::from(SizedBox::new().width(8.0)),
-            if current == Picker::Local {
+            if current == Picker::New {
+                let preview = name_preview.clone();
+                let submit = submit.clone();
+                Expanded::new(
+                    EditableText::new(new_name.clone())
+                        .placeholder("Project name")
+                        .placeholder_color(MUTED)
+                        .style(crate::typography::interface().font_size(15.0).color(INK))
+                        .on_changed(move |value| {
+                            preview.set(value.to_owned());
+                        })
+                        .on_submit(move |value| {
+                            if !value.trim().is_empty() {
+                                submit(ProjectRequest::Create(value));
+                            }
+                        }),
+                )
+                .into()
+            } else if current == Picker::Local {
                 Expanded::new(
                     EditableText::new(path.clone())
                         .placeholder("Absolute folder path")
@@ -67,15 +94,34 @@ pub fn overlay(
     match current {
         Picker::Sources => {
             rows.push(row(28.0, label("Sources", 12.0, FontWeight::W500, MUTED)));
-            rows.push(row(
+            let create_source = row(
                 48.0,
                 source(
                     "＋",
                     "New project",
                     "Start a new Git repository from a name",
-                    false,
+                    project_data.is_some(),
                 ),
-            ));
+            );
+            if project_data.is_some() {
+                let step = step.clone();
+                let name = new_name.clone();
+                let preview = name_preview.clone();
+                rows.push(
+                    ActionSurface::with_child(create_source)
+                        .label("New project")
+                        .size(Size::new(574.0, 48.0))
+                        .hover_color(Color::rgba(241, 241, 244, 255))
+                        .on_press(move || {
+                            name.clear();
+                            preview.set(String::new());
+                            step.set(Picker::New);
+                        })
+                        .into(),
+                );
+            } else {
+                rows.push(create_source);
+            }
             rows.push(
                 ActionSurface::with_child(row(
                     48.0,
@@ -123,11 +169,11 @@ pub fn overlay(
                         let text = path.text();
                         if text.is_empty() {
                             if let Some(dir) = current.as_ref().and_then(|d| d.to_str()) {
-                                submit(dir.to_owned());
+                                submit(ProjectRequest::Open(dir.to_owned()));
                                 return;
                             }
                         }
-                        submit(text);
+                        submit(ProjectRequest::Open(text));
                     }
                 }),
             ));
@@ -166,6 +212,91 @@ pub fn overlay(
                 }
             }
             for message in [browse_error.get(), error].into_iter().flatten() {
+                rows.push(row(
+                    30.0,
+                    label(
+                        &message,
+                        13.0,
+                        FontWeight::W400,
+                        Color::rgba(161, 38, 38, 255),
+                    ),
+                ));
+            }
+        }
+        Picker::New => {
+            let name = name_preview.get();
+            let destination = project_data.as_ref().map(|base| {
+                if name.trim().is_empty() {
+                    base.join("projects")
+                } else {
+                    managed_projects::preview_root(base, &name)
+                        .unwrap_or_else(|_| base.join("projects"))
+                }
+            });
+            let location = destination
+                .as_ref()
+                .map(|path| {
+                    format!(
+                        "{} {}",
+                        if name.trim().is_empty() {
+                            "Goes in"
+                        } else {
+                            "Creates"
+                        },
+                        path.display()
+                    )
+                })
+                .unwrap_or_else(|| "No local profile directory".into());
+            let allow_create = project_data
+                .as_ref()
+                .is_some_and(|base| managed_projects::preview_root(base, &name).is_ok());
+            let create = Button::new("Create")
+                .style(
+                    ButtonStyle::new()
+                        .variant(ButtonVariant::Outline)
+                        .height(28.0)
+                        .text_style(crate::typography::interface().font_size(14.0)),
+                )
+                .enabled(allow_create)
+                .on_click(move || submit(ProjectRequest::Create(new_name.text())));
+            rows.push(row(
+                52.0,
+                Row::new(vec![
+                    Widget::from(Expanded::new(source(
+                        "＋",
+                        if name.trim().is_empty() {
+                            "New project"
+                        } else {
+                            name.trim()
+                        },
+                        &location,
+                        true,
+                    ))),
+                    create.into(),
+                ])
+                .spacing(12.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center),
+            ));
+            let existing = step.clone();
+            rows.push(
+                ActionSurface::with_child(row(
+                    48.0,
+                    source(
+                        "↪",
+                        "Add existing project",
+                        "Open a folder or clone a repository",
+                        true,
+                    ),
+                ))
+                .label("Add existing project")
+                .size(Size::new(574.0, 48.0))
+                .hover_color(Color::rgba(241, 241, 244, 255))
+                .on_press(move || {
+                    existing.set(Picker::Sources);
+                })
+                .into(),
+            );
+            if let Some(message) = error {
                 rows.push(row(
                     30.0,
                     label(
