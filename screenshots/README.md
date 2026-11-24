@@ -129,3 +129,19 @@ still differ.
 - [T3 Code](t3/saved-thread-find-first-match-light-1280x800.png) · [Butler](butler/saved-thread-find-first-match-light-1280x800.png)
 - Original, unchanged 1280×800 X11 frames from [native run 45414278088](https://github.com/Ferrb9579/butler/actions/runs/45414278088), T3 Code v0.1.11 (`59651c1761f6c63e9b6056839067066968e6a406`) and Butler `82c42b4411f8f4800928cfddd9e7b72c1bda6415`. Both have the same two fixture messages with `release` and count `1/2` visibly present. The original run's T3 verifier misread the highlighted text. Independent inspection and the corrected strict OCR gate verified the unchanged frames after the run.
 - 275,416 of 1,024,000 pixels differ (26.90%). T3 highlights both hits and retains its details panel and composer. Butler still lacks that inline background and those saved-thread surfaces. The T3 Next and no-match frames were not captured in this run and aren't represented here.
+
+## Saved thread Find, Next and no match (behavior comparison)
+
+| State | T3 Code | Butler | Raw differing pixels |
+| --- | --- | --- | --- |
+| Next: `release`, `2/2` | [PNG](t3/saved-thread-find-next-light-1280x800.png) | [PNG](butler/saved-thread-find-next-light-1280x800.png) | 274,874 of 1,024,000 |
+| No match: `absent`, `0/0` | [PNG](t3/saved-thread-find-no-match-light-1280x800.png) | [PNG](butler/saved-thread-find-no-match-light-1280x800.png) | 274,508 of 1,024,000 |
+
+[Native run 45416871021](https://github.com/Ferrb9579/butler/actions/runs/45416871021)
+verified all three Find interaction states in both apps with two identical
+synthetic saved messages. These are the original 1280×800 X11 frames for the
+newly verified states; T3 Code was v0.1.11
+(`59651c1761f6c63e9b6056839067066968e6a406`) and Butler was
+`fef5acc4ecffa496d56315f8a5341ac387c8b7a7`. The workflow typed into the Find
+field and clicked Next without submitting any message. This verifies the
+interaction and counts in this fixture, not visual parity.
