@@ -1512,7 +1512,64 @@ mod ui_tests {
             sim.focus("Find in thread").unwrap();
             sim.press(Code::Escape).unwrap();
             assert!(sim.focus("Close thread find").is_err());
+            sim.click("Thread actions for Needle first. needle twice.")
+                .unwrap();
+            sim.click("Find in thread").unwrap();
+            sim.focus("Close thread find").unwrap();
         });
+        // Inspect actual painted bounds, not the width requested of the lane.
+        // The saved user bubble must never sit behind the Find bar.
+        use incular::core::Transform;
+        use incular::rendering::{Brush, PaintCommand};
+        let window = app.active_window_ids()[0];
+        for width in [1280.0, 920.0] {
+            app.process_runtime_work();
+            let (display, _) = app
+                .run_window_frame_at(
+                    window,
+                    Constraints::tight(Size::new(width, 800.0)),
+                    std::time::Instant::now(),
+                )
+                .unwrap()
+                .unwrap();
+            let mut transforms = vec![Transform::IDENTITY];
+            let mut bubble = None;
+            let mut bar = None;
+            for command in display.commands() {
+                match command {
+                    PaintCommand::PushTransform { transform } => {
+                        transforms.push(transforms.last().unwrap().then(*transform));
+                    }
+                    PaintCommand::PopTransform => {
+                        transforms.pop();
+                    }
+                    PaintCommand::RRect {
+                        rrect,
+                        brush: Brush::Solid(color),
+                    } => {
+                        let top_left = transforms
+                            .last()
+                            .unwrap()
+                            .transform_point(rrect.rect.origin);
+                        if *color == Color::rgba(235, 235, 237, 255) && bubble.is_none() {
+                            bubble = Some((top_left, rrect.rect.size));
+                        }
+                        if *color == Color::rgba(255, 255, 255, 213) {
+                            bar = Some((top_left, rrect.rect.size));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let (message, message_size) = bubble.expect("saved user bubble painted");
+            let (find, find_size) = bar.expect("Find bar painted");
+            if width == 1280.0 {
+                assert!((message.x + message_size.width - 956.0).abs() < 1.0);
+                assert!(message.x + message_size.width <= find.x);
+            } else {
+                assert!(message.y >= find.y + find_size.height);
+            }
+        }
     }
 
     #[test]

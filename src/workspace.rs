@@ -268,17 +268,29 @@ pub fn draft(
                         let margin = if width >= 720.0 { 48.0 } else { 16.0 };
                         let composer_width = (width - 2.0 * margin).clamp(1.0, 652.0);
                         if let Some(turn) = selected.as_ref() {
-                            let body: Widget = Container::new()
-                                .padding(EdgeInsets::symmetric(margin, 0.0))
-                                .child(Container::new().width(composer_width).child(transcript(
+                            let find_width = (width - 24.0).clamp(1.0, 280.0);
+                            let top = if jump.is_some()
+                                && margin + composer_width > width - 12.0 - find_width
+                            {
+                                52.0_f32.min(height)
+                            } else {
+                                0.0
+                            };
+                            // Fix the lane's actual width rather than nesting a
+                            // width request inside the tight full-pane Stack child.
+                            let mut layers = vec![
+                                Positioned::new(transcript(
                                     turn,
                                     jump.as_ref(),
                                     composer_width,
                                     #[cfg(test)]
                                     offline.clone(),
-                                )))
-                                .into();
-                            let mut layers = vec![Positioned::fill(body)];
+                                ))
+                                .left(margin)
+                                .top(top)
+                                .bottom(0.0)
+                                .width(composer_width),
+                            ];
                             if let Some(jump) = &jump {
                                 layers.push(
                                     Positioned::new(find_bar(
@@ -286,7 +298,7 @@ pub fn draft(
                                         jump,
                                         jump_state.clone(),
                                         find_input.clone(),
-                                        (width - 24.0).clamp(1.0, 280.0),
+                                        find_width,
                                     ))
                                     .top(12.0)
                                     .right(12.0),

@@ -846,16 +846,22 @@ thread_find_row_crop() {
 }
 
 thread_find_transcript() {
-  local app=$1 file=$2 crop='940x718+281+43' psm=11
-  if [[ "$app" == butler ]]; then
-    # The saved user bubble is now flush right in the lane, and the reply
-    # stays left. Verify separate message regions, both outside the Find bar.
-    settings_phrase "$file" '440x86+540+43' 'Does the release open' 11 >/dev/null &&
-      settings_phrase "$file" '425x85+291+89' 'The release opens and shows this thread' 11 >/dev/null
-    return
+  local app=$1 file=$2 phase=${3:-before-find} user_crop assistant_crop
+  # Single-line role regions measured on the original 45411570052 native
+  # fixture frames. Never accept the repeated user title in the breadcrumb
+  # or sidebar, or a phrase found in the other role's position.
+  case "$app" in
+    t3) user_crop='220x41+753+64'; assistant_crop='338x44+296+147' ;;
+    butler) user_crop='220x42+753+60'; assistant_crop='338x42+296+109' ;;
+    *) return 1 ;;
+  esac
+  if ! settings_phrase "$file" "$user_crop" 'Does the release open' 7 >/dev/null; then
+    # The earlier Butler layout placed the user bubble farther right.
+    # Accept that exact region only before Find opens; it overlaps Find.
+    [[ "$app" == butler && "$phase" == before-find ]] &&
+      settings_phrase "$file" '205x42+1044+60' 'Does the release open' 7 >/dev/null || return 1
   fi
-  settings_phrase "$file" "$crop" 'Does the release open' "$psm" >/dev/null &&
-    settings_phrase "$file" "$crop" 'The release opens and shows this thread' "$psm" >/dev/null
+  settings_phrase "$file" "$assistant_crop" 'The release opens and shows this thread' 7 >/dev/null
 }
 
 await_thread_find_count() {
@@ -869,7 +875,7 @@ await_thread_find_count() {
       if (( y >= anchor_y-5 && y <= anchor_y+5 )) &&
          project_literal "$file" "$input" "$query" 7 &&
          thread_find_count_label "$file" "$count" "$y" &&
-         thread_find_transcript "$app" "$file"; then
+         thread_find_transcript "$app" "$file" find; then
         return 0
       fi
     fi
