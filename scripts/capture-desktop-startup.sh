@@ -162,6 +162,8 @@ capture_one() (
     capture_reference_new_project_form "$window"
   elif [[ "$name" == butler-new-project-keys ]]; then
     capture_butler_new_project_keys "$window" "$runtime/state/butler"
+  elif [[ "$name" == butler-local-folder-filter ]]; then
+    capture_butler_local_folder_filter "$window" "$runtime/state/butler" "$runtime/home"
   elif [[ "$name" == t3-git-url-review || "$name" == butler-git-url-review ]]; then
     capture_git_url_review "$window" "${name%-git-url-review}" "$runtime"
   elif [[ "$name" == butler-git-url-keys ]]; then
@@ -528,6 +530,69 @@ verify_butler_new_project_keys() (
   fi
   rm -f -- "$marker" || return 1
   echo 'New Project fixture verified: Down selected Add existing, one Return opened Sources, no project created or registered.' | tee -a "$notes"
+)
+
+capture_butler_local_folder_filter() {
+  local window=$1 state=$2 home=$3 tick coords x y frame
+  local prefix="$out/butler-local-folder-filter"
+  local input='510x40+389+84' rows='430x143+362+199'
+  [[ ! -e "$state/local-projects" ]] || return 1
+  click_project_control "$window" "$prefix-landing.png" '160x40+604+442' 'Add project' 7 || return 1
+  click_project_control "$window" "$prefix-sources.png" '574x320+353+120' 'Local folder' 11 || return 1
+  click_project_control "$window" "$prefix-empty.png" "$input" 'Absolute folder path' 7 || return 1
+  xdotool type --clearmodifiers "$home/" || return 1
+  frame="$prefix-unfiltered.png"
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$frame" || return 1
+    if settings_phrase "$frame" "$rows" 'Alpha' 11 >/dev/null &&
+       settings_phrase "$frame" "$rows" 'Alpine' 11 >/dev/null &&
+       ! settings_phrase "$frame" "$rows" 'Hidden Fixture' 11 >/dev/null &&
+       ! settings_phrase "$frame" "$rows" 'Alpine File' 11 >/dev/null; then
+      break
+    fi
+    sleep 0.4
+  done
+  (( tick < 15 )) || return 1
+  xdotool type --clearmodifiers 'alpi' || return 1
+  frame="$prefix-filtered.png"
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$frame" || return 1
+    if coords=$(settings_phrase "$frame" "$rows" 'Alpine' 11) &&
+       settings_phrase "$frame" '170x30+567+164' 'Open folder' 7 >/dev/null &&
+       ! settings_phrase "$frame" "$rows" 'Alpha' 11 >/dev/null &&
+       ! settings_phrase "$frame" "$rows" 'Alpine File' 11 >/dev/null; then
+      break
+    fi
+    sleep 0.4
+  done
+  (( tick < 15 )) || return 1
+  read -r x y <<<"$coords"
+  # The only result click is bound to real Alpine row pixels. Never use Open.
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 || return 1
+  xdotool mousemove 1390 890 || return 1
+  await_project_phrase "$window" "$prefix-browsed.png" "$rows" 'Nested Child' 11 >/dev/null || return 1
+  settings_phrase "$prefix-browsed.png" '170x30+567+164' 'Open folder' 7 >/dev/null &&
+    [[ ! -e "$state/local-projects" ]]
+}
+
+verify_butler_local_folder_filter() (
+  local name='butler-local-folder-filter' rc
+  local runtime="$tmp/$name" marker="$out/$name-unverified" notes="$out/$name-capture-notes.txt"
+  touch "$marker" || return 1
+  echo 'Optional Butler-only Local folder typeahead using a disposable home; separate manual-import fixture retained.' >"$notes" || return 1
+  mkdir -p "$runtime/home/Alpha" "$runtime/home/Alpine/Nested Child" "$runtime/home/.Hidden Fixture" "$runtime/state/butler" || return 1
+  touch "$runtime/home/Alpine File" || return 1
+  printf '%s\n' 'butler-onboarding-complete-v1' >"$runtime/state/butler/onboarding" || return 1
+  set +e
+  HOME="$runtime/home" capture_one "$name" "$butler"
+  rc=$?
+  set -e
+  if (( rc != 0 )) || [[ -e "$runtime/state/butler/local-projects" ]]; then
+    echo 'Local folder typeahead unverified; raw frames are diagnostic only.' | tee -a "$notes" >&2
+    return 1
+  fi
+  rm -f -- "$marker" || return 1
+  echo 'Local folder fixture verified: typed filter excluded Alpha, clicking Alpine showed Nested Child, and no project was registered.' | tee -a "$notes"
 )
 
 verify_native_new_project() {
@@ -1866,6 +1931,15 @@ if [[ "${CAPTURE_BUTLER_NEW_PROJECT_KEYS:-0}" == 1 ]]; then
   set -e
   if (( new_project_keys_rc != 0 )); then
     echo 'Optional native Butler New Project keyboard check did not complete; see unverified marker' >&2
+  fi
+fi
+if [[ "${CAPTURE_BUTLER_LOCAL_FOLDER_FILTER:-0}" == 1 ]]; then
+  set +e
+  verify_butler_local_folder_filter
+  local_folder_filter_rc=$?
+  set -e
+  if (( local_folder_filter_rc != 0 )); then
+    echo 'Optional native Butler Local folder typeahead did not complete; see unverified marker' >&2
   fi
 fi
 if [[ "${CAPTURE_T3_NEW_PROJECT_FORM:-0}" == 1 ]]; then
