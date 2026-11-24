@@ -1,6 +1,7 @@
 //! Local provider settings overlay. The canned provider is available to tests only.
 
 use crate::empty_workspace::{WHITE, label, space};
+use crate::settings_icons::icon;
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::profile::{Profile, Provider};
 use incular::{
@@ -14,7 +15,39 @@ const SIDEBAR: Color = Color::rgba(250, 250, 250, 255); // zinc-50
 const RULE: Color = Color::rgba(228, 228, 231, 255); // zinc-200
 const MUTED: Color = Color::rgba(113, 113, 123, 255); // zinc-500
 const INK: Color = Color::rgba(24, 24, 27, 255); // zinc-900
-const SELECTED: Color = Color::rgba(240, 240, 243, 255);
+const SELECTED: Color = Color::rgba(24, 24, 27, 15); // foreground/6
+const LIST_HOVER: Color = Color::rgba(250, 250, 250, 64); // muted/25
+const ROW_RULE: Color = Color::rgba(228, 228, 231, 128); // border/50
+const INPUT: Color = Color::rgba(212, 212, 216, 255); // zinc-300
+const SIDEBAR_ICON: Color = Color::rgba(113, 113, 123, 217);
+const SIDEBAR_MUTED: Color = Color::rgba(113, 113, 123, 204);
+
+#[derive(Debug, PartialEq)]
+struct ProviderGeometry {
+    sidebar: f32,
+    page: f32,
+    gutter: f32,
+    card_height: Option<f32>,
+}
+
+// WorkspacePageContainer, SettingsSidebarNav, and @container/providers.
+fn provider_geometry(
+    viewport_width: f32,
+    viewport_height: f32,
+    modal_width: f32,
+) -> ProviderGeometry {
+    let sidebar = if viewport_width < 768.0 { 56.0 } else { 240.0 };
+    let page = (modal_width - sidebar).clamp(0.0, 896.0);
+    let gutter = if viewport_width < 640.0 { 20.0 } else { 24.0 };
+    let card_height =
+        (page - 2.0 * gutter >= 768.0).then(|| (viewport_height - 176.0).clamp(512.0, 704.0));
+    ProviderGeometry {
+        sidebar,
+        page,
+        gutter,
+        card_height,
+    }
+}
 
 // T3 Code v0.1.11 AppRouteModal.tsx:68–104. Current native window exposes
 // no caption/safe-area insets to this layout; these dimensions are for zero inset.
@@ -113,32 +146,41 @@ pub fn overlay(
     device: &str,
     provider_selection: Signal<usize>,
     names: Names,
-    go_back: impl Fn() + 'static,
+    go_back: impl Fn() + Clone + 'static,
     #[cfg(test)] fixture_enabled: Signal<bool>,
 ) -> Widget {
     let selected = provider_selection.get();
-    let first = Container::new()
-        .width(239.0)
-        .color(SIDEBAR)
-        .child(SingleChildScrollView::new(sidebar()));
-    let detail = details(
-        device,
-        selected,
-        provider_selection,
-        names,
-        go_back,
-        #[cfg(test)]
-        fixture_enabled,
-    );
-    let row: Widget = Row::new(vec![
-        Widget::from(first),
-        Container::new().width(1.0).color(RULE).into(),
-        Expanded::new(detail).into(),
-    ])
-    .cross_axis_alignment(CrossAxisAlignment::Stretch)
-    .into();
+    let saved = names.committed.get();
+    let name_error = names.error.get();
+    let device = device.to_owned();
     let modal = LayoutBuilder::new(move |_, constraints| {
-        let g = modal_geometry(constraints.max_width(), constraints.max_height());
+        let width = constraints.max_width();
+        let height = constraints.max_height();
+        let g = modal_geometry(width, height);
+        let layout = provider_geometry(width, height, g.width);
+        let first = Container::new()
+            .width(layout.sidebar - 1.0)
+            .color(SIDEBAR)
+            .child(SingleChildScrollView::new(sidebar(layout.sidebar == 56.0)));
+        let detail = details(
+            &device,
+            &layout,
+            width < 640.0,
+            selected,
+            provider_selection.clone(),
+            names.clone(),
+            &saved,
+            name_error.as_deref(),
+            go_back.clone(),
+            #[cfg(test)]
+            fixture_enabled.clone(),
+        );
+        let row = Row::new(vec![
+            Widget::from(first),
+            Container::new().width(1.0).color(RULE).into(),
+            Expanded::new(detail).into(),
+        ])
+        .cross_axis_alignment(CrossAxisAlignment::Stretch);
         let radius = BorderRadius::all(Radius::circular(g.radius));
         let mut decoration = BoxDecoration::new().color(PAGE).border_radius(radius);
         if g.framed {
@@ -159,7 +201,7 @@ pub fn overlay(
                     .width(g.width)
                     .height(g.height)
                     .decoration(decoration)
-                    .child(ClipRRect::new(radius, row.clone())),
+                    .child(ClipRRect::new(radius, row)),
             )
             .into()
     });
@@ -177,8 +219,8 @@ pub fn overlay(
     .into()
 }
 
-fn sidebar() -> Widget {
-    let mut rows = vec![nav("Search", false), space(4.0)];
+fn sidebar(compact: bool) -> Widget {
+    let mut rows = vec![nav("Search", false, compact), space(8.0)];
     for (heading, section) in [
         (
             "",
@@ -206,18 +248,29 @@ fn sidebar() -> Widget {
             "Code",
             &["Projects", "Source control & issues", "Worktrees"][..],
         ),
+        ("Connections", &["Environments", "Sharing & access"][..]),
     ] {
         if !heading.is_empty() {
-            rows.push(space(8.0));
-            rows.push(
-                Container::new()
-                    .padding(EdgeInsets::symmetric(8.0, 4.0))
-                    .child(label(heading, 12.0, FontWeight::W500, MUTED))
-                    .into(),
-            );
+            rows.push(space(16.0));
+            if compact {
+                rows.extend([Container::new().height(1.0).color(RULE).into(), space(16.0)]);
+            } else {
+                rows.push(
+                    Container::new()
+                        .height(16.0)
+                        .padding(EdgeInsets::symmetric(8.0, 0.0))
+                        .alignment(Alignment::CENTER_LEFT)
+                        .child(styled(heading, 12.0, 16.0, FontWeight::W500, SIDEBAR_MUTED))
+                        .into(),
+                );
+                rows.push(space(4.0));
+            }
         }
-        for item in section {
-            rows.push(nav(item, *item == "Providers"));
+        for (index, item) in section.iter().enumerate() {
+            if index > 0 {
+                rows.push(space(4.0));
+            }
+            rows.push(nav(item, *item == "Providers", compact));
         }
     }
     Container::new()
@@ -230,106 +283,197 @@ fn sidebar() -> Widget {
         .into()
 }
 
-fn nav(text: &str, selected: bool) -> Widget {
+fn nav(text: &str, selected: bool, compact: bool) -> Widget {
+    let search = text == "Search";
+    let mut items = vec![icon(text, 16.0, if selected { INK } else { SIDEBAR_ICON })];
+    if !compact {
+        items.push(styled(
+            text,
+            14.0,
+            20.0,
+            FontWeight::W500,
+            if selected { INK } else { SIDEBAR_MUTED },
+        ));
+        if search {
+            items.extend([
+                Widget::from(Spacer::new()),
+                Container::new()
+                    .width(20.0)
+                    .height(20.0)
+                    .alignment(Alignment::CENTER)
+                    .decoration(
+                        BoxDecoration::new()
+                            .color(Color::rgba(24, 24, 27, 18))
+                            .border_radius(BorderRadius::all(Radius::circular(4.0))),
+                    )
+                    .child(styled("/", 12.0, 16.0, FontWeight::W400, MUTED))
+                    .into(),
+            ]);
+        }
+    }
     Container::new()
-        .height(36.0)
-        .padding(EdgeInsets::symmetric(12.0, 0.0))
-        .alignment(Alignment::CENTER_LEFT)
+        .height(32.0)
+        .padding(EdgeInsets::symmetric(if search { 8.0 } else { 10.0 }, 0.0))
+        .alignment(if compact {
+            Alignment::CENTER
+        } else {
+            Alignment::CENTER_LEFT
+        })
         .decoration(
             BoxDecoration::new()
                 .color(if selected { WHITE } else { SIDEBAR })
                 .border_radius(BorderRadius::all(Radius::circular(8.0))),
         )
-        .child(label(
-            text,
-            14.0,
-            FontWeight::W400,
-            if selected { INK } else { MUTED },
-        ))
+        .child(
+            Row::new(items)
+                .spacing(8.0)
+                .main_axis_size(if search && !compact {
+                    MainAxisSize::Max
+                } else {
+                    MainAxisSize::Min
+                })
+                .cross_axis_alignment(CrossAxisAlignment::Center),
+        )
         .into()
 }
 
 fn details(
     device: &str,
+    layout: &ProviderGeometry,
+    compact: bool,
     selected: usize,
     selection: Signal<usize>,
     names: Names,
+    saved: &[String; 3],
+    name_error: Option<&str>,
     go_back: impl Fn() + 'static,
     #[cfg(test)] fixture_enabled: Signal<bool>,
 ) -> Widget {
     let title = Provider::ALL[selected].label();
-    let saved = names.committed.get();
+    let gap = if compact { 8.0 } else { 12.0 };
+    let close_size = if compact { 32.0 } else { 28.0 };
     let heading = Container::new()
         .height(48.0)
         .padding(EdgeInsets::from_ltrb(20.0, 0.0, 8.0, 0.0))
         .child(
             Row::new(vec![
                 breadcrumb_label("Settings", MUTED),
-                SizedBox::new().width(12.0).into(),
+                SizedBox::new().width(gap).into(),
                 breadcrumb_label("/", MUTED),
-                SizedBox::new().width(12.0).into(),
+                SizedBox::new().width(gap).into(),
                 breadcrumb_label("Providers", INK),
                 Spacer::new().into(),
-                ActionSurface::with_child(label("×", 16.0, FontWeight::W400, MUTED))
-                    .label("Back to workspace")
-                    .size(Size::new(28.0, 28.0))
-                    .on_press(go_back)
-                    .into(),
+                Button::with_child(
+                    "Back to workspace",
+                    icon("close", if compact { 18.0 } else { 16.0 }, MUTED),
+                )
+                .style(
+                    ButtonStyle::new()
+                        .fixed_size(Size::new(close_size, close_size))
+                        .variant(ButtonVariant::Ghost)
+                        .background(Color::TRANSPARENT)
+                        .padding(EdgeInsets::ZERO),
+                )
+                .on_click(go_back)
+                .into(),
             ])
             .cross_axis_alignment(CrossAxisAlignment::Center),
         );
 
-    let mut choices: Vec<Widget> = saved
+    let choice_buttons: Vec<Widget> = saved
         .iter()
         .enumerate()
         .map(|(index, name)| {
             let selection = selection.clone();
             ActionSurface::with_child(
                 Container::new()
-                    .padding(EdgeInsets::symmetric(16.0, 6.0))
+                    .padding(EdgeInsets::symmetric(
+                        if compact { 12.0 } else { 16.0 },
+                        12.0,
+                    ))
                     .alignment(Alignment::CENTER_LEFT)
                     .child(
                         Column::new(vec![
-                            label(name, 15.0, FontWeight::W500, INK),
-                            space(5.0),
-                            label("Not configured", 12.0, FontWeight::W400, MUTED),
+                            styled(name, 14.0, 20.0, FontWeight::W500, INK),
+                            styled(
+                                "Not configured",
+                                12.0,
+                                16.0,
+                                FontWeight::W400,
+                                SIDEBAR_MUTED,
+                            ),
                         ])
                         .main_axis_size(MainAxisSize::Min)
                         .cross_axis_alignment(CrossAxisAlignment::Start),
                     ),
             )
             .label(name.as_str())
-            .size(Size::new(272.0, if index == 2 { 72.0 } else { 82.0 }))
-            .color(if selected == index { SELECTED } else { PAGE })
-            .hover_color(SELECTED)
+            .size(Size::new(0.0, 71.0))
+            .color(if selected == index {
+                SELECTED
+            } else {
+                Color::TRANSPARENT
+            })
+            .hover_color(if selected == index {
+                SELECTED
+            } else {
+                LIST_HOVER
+            })
             .on_press(move || {
                 selection.set(index);
             })
             .into()
         })
         .collect();
-    choices.extend([space(12.0), nav("Add provider", false)]);
+    let mut choices: Vec<Widget> = choice_buttons
+        .into_iter()
+        .flat_map(|row| [row, Container::new().height(1.0).color(ROW_RULE).into()])
+        .collect();
+    choices.push(
+        Container::new()
+            .height(44.0)
+            .padding(EdgeInsets::symmetric(
+                if compact { 12.0 } else { 16.0 },
+                0.0,
+            ))
+            .alignment(Alignment::CENTER_LEFT)
+            .child(
+                Row::new(vec![
+                    icon("plus", 16.0, MUTED),
+                    styled("Add provider", 14.0, 20.0, FontWeight::W400, MUTED),
+                ])
+                .spacing(12.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center),
+            )
+            .into(),
+    );
     let rename = names.clone();
     let mut property_rows = vec![
-        label(&saved[selected], 17.0, FontWeight::W600, INK),
-        space(28.0),
-        label("Status", 14.0, FontWeight::W500, INK),
-        space(8.0),
-        label("No providers configured.", 13.0, FontWeight::W400, MUTED),
-        space(16.0),
-        Container::new().height(1.0).color(RULE).into(),
-        space(16.0),
+        styled(&saved[selected], 16.0, 24.0, FontWeight::W600, INK),
+        space(20.0),
+        styled("Status", 14.0, 20.0, FontWeight::W500, INK),
+        space(4.0),
+        styled(
+            "No providers configured.",
+            12.0,
+            16.0,
+            FontWeight::W400,
+            MUTED,
+        ),
+        space(12.0),
+        Container::new().height(1.0).color(ROW_RULE).into(),
+        space(12.0),
         Row::new(vec![
-            label("Display name", 14.0, FontWeight::W500, INK),
+            styled("Display name", 14.0, 20.0, FontWeight::W500, INK),
             Spacer::new().into(),
             Container::new()
-                .width(200.0)
+                .width(224.0)
                 .height(28.0)
-                .padding(EdgeInsets::symmetric(8.0, 0.0))
+                .padding(EdgeInsets::symmetric(9.0, 0.0))
                 .alignment(Alignment::CENTER_LEFT)
                 .decoration(
                     BoxDecoration::new()
-                        .border(Border::new(1.0, RULE))
+                        .border(Border::new(1.0, INPUT))
                         .border_radius(BorderRadius::all(Radius::circular(8.0))),
                 )
                 .child(
@@ -343,8 +487,8 @@ fn details(
         .cross_axis_alignment(CrossAxisAlignment::Center)
         .into(),
     ];
-    if let Some(error) = names.error.get() {
-        property_rows.push(label(&error, 13.0, FontWeight::W400, MUTED));
+    if let Some(error) = name_error {
+        property_rows.push(label(error, 13.0, FontWeight::W400, MUTED));
     }
     property_rows.extend([
         space(34.0),
@@ -373,48 +517,85 @@ fn details(
     let properties = Column::new(property_rows)
         .main_axis_size(MainAxisSize::Min)
         .cross_axis_alignment(CrossAxisAlignment::Start);
+    let choices = Column::new(choices)
+        .main_axis_size(MainAxisSize::Min)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch);
+    let properties = Container::new()
+        .padding(EdgeInsets::all(16.0))
+        .child(properties);
+    let card: Widget = if let Some(height) = layout.card_height {
+        Container::new()
+            .height(height)
+            .child(
+                Row::new(vec![
+                    Widget::from(
+                        Container::new()
+                            .width(271.0)
+                            .child(SingleChildScrollView::new(choices)),
+                    ),
+                    Container::new()
+                        .width(1.0)
+                        .color(Color::rgba(228, 228, 231, 153))
+                        .into(),
+                    Expanded::new(SingleChildScrollView::new(properties)).into(),
+                ])
+                .cross_axis_alignment(CrossAxisAlignment::Stretch),
+            )
+            .into()
+    } else {
+        Column::new(vec![
+            Widget::from(choices),
+            Container::new()
+                .height(1.0)
+                .color(Color::rgba(228, 228, 231, 153))
+                .into(),
+            properties.into(),
+        ])
+        .main_axis_size(MainAxisSize::Min)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .into()
+    };
+    let radius = BorderRadius::all(Radius::circular(12.0));
     let provider_box: Widget = Container::new()
         .decoration(
             BoxDecoration::new()
                 .color(PAGE)
-                .border(Border::new(1.0, RULE))
-                .border_radius(BorderRadius::all(Radius::circular(12.0))),
+                .border(Border::new(1.0, Color::rgba(228, 228, 231, 153)))
+                .border_radius(radius),
         )
-        .child(
-            Row::new(vec![
-                Widget::from(
-                    Container::new().width(272.0).child(
-                        Column::new(choices)
-                            .main_axis_size(MainAxisSize::Min)
-                            .cross_axis_alignment(CrossAxisAlignment::Stretch),
-                    ),
-                ),
-                Expanded::new(
-                    Container::new()
-                        .decoration(BoxDecoration::new().border(Border::new(1.0, RULE)))
-                        .padding(EdgeInsets::all(16.0))
-                        .child(properties),
-                )
-                .into(),
-            ])
-            .cross_axis_alignment(CrossAxisAlignment::Start),
-        )
+        .child(ClipRRect::new(radius, card))
         .into();
-    let mut content = vec![
+    let inset = if compact { 12.0 } else { 16.0 };
+    let scope_pair = |prefix, value, device_icon| {
         Row::new(vec![
-            label("Applying settings for", 14.0, FontWeight::W400, MUTED),
-            SizedBox::new().width(8.0).into(),
-            chip("All projects"),
-            SizedBox::new().width(8.0).into(),
-            label("on", 14.0, FontWeight::W400, MUTED),
-            SizedBox::new().width(8.0).into(),
-            chip(device),
+            styled(prefix, 14.0, 20.0, FontWeight::W400, MUTED),
+            chip(value, compact, device_icon),
         ])
+        .spacing(6.0)
+        .main_axis_size(MainAxisSize::Min)
         .cross_axis_alignment(CrossAxisAlignment::Center)
-        .into(),
-        space(34.0),
-        label("Providers", 16.0, FontWeight::W600, INK),
-        space(14.0),
+    };
+    let mut content = vec![
+        Widget::from(
+            Container::new()
+                .padding(EdgeInsets::symmetric(inset, 0.0))
+                .child(
+                    Wrap::new(vec![
+                        Widget::from(scope_pair("Applying settings for", "All projects", false)),
+                        scope_pair("on", device, true).into(),
+                    ])
+                    .spacing(6.0)
+                    .run_spacing(4.0),
+                ),
+        ),
+        space(32.0),
+        Container::new()
+            .height(28.0)
+            .padding(EdgeInsets::symmetric(inset, 0.0))
+            .alignment(Alignment::CENTER_LEFT)
+            .child(styled("Providers", 16.0, 24.0, FontWeight::W600, INK))
+            .into(),
+        space(10.0),
     ];
     #[cfg(test)]
     if fixture_enabled.get() {
@@ -429,18 +610,26 @@ fn details(
             fixture_enabled.set(true);
         }));
     }
-    content.extend([provider_box, space(20.0)]);
+    content.push(provider_box);
     Column::new(vec![
         Widget::from(heading),
         Container::new().height(1.0).color(RULE).into(),
         Expanded::new(SingleChildScrollView::new(
-            Container::new()
-                .padding(EdgeInsets::symmetric(56.0, 24.0))
-                .child(
-                    Column::new(content)
-                        .main_axis_size(MainAxisSize::Min)
-                        .cross_axis_alignment(CrossAxisAlignment::Stretch),
-                ),
+            Container::new().alignment(Alignment::TOP_CENTER).child(
+                Container::new()
+                    .width(layout.page)
+                    .padding(EdgeInsets::from_ltrb(
+                        layout.gutter,
+                        24.0,
+                        layout.gutter,
+                        48.0,
+                    ))
+                    .child(
+                        Column::new(content)
+                            .main_axis_size(MainAxisSize::Min)
+                            .cross_axis_alignment(CrossAxisAlignment::Stretch),
+                    ),
+            ),
         ))
         .into(),
     ])
@@ -448,27 +637,50 @@ fn details(
     .into()
 }
 
-fn chip(text: &str) -> Widget {
+fn chip(text: &str, compact: bool, device_icon: bool) -> Widget {
+    let mut items = Vec::new();
+    if device_icon {
+        items.push(icon("cloud", 14.0, MUTED));
+    }
+    items.push(styled(
+        text,
+        if compact { 16.0 } else { 14.0 },
+        20.0,
+        FontWeight::W500,
+        INK,
+    ));
+    items.push(icon("chevron-down", 14.0, Color::rgba(113, 113, 123, 179)));
     Container::new()
-        .padding(EdgeInsets::symmetric(10.0, 5.0))
+        .height(if compact { 32.0 } else { 28.0 })
+        .padding(EdgeInsets::symmetric(10.0, 0.0))
+        .alignment(Alignment::CENTER)
         .decoration(
             BoxDecoration::new()
                 .color(WHITE)
-                .border(Border::new(1.0, RULE))
+                .border(Border::new(1.0, INPUT))
                 .border_radius(BorderRadius::all(Radius::circular(8.0))),
         )
-        .child(label(text, 14.0, FontWeight::W400, INK))
+        .child(
+            Row::new(items)
+                .spacing(6.0)
+                .main_axis_size(MainAxisSize::Min)
+                .cross_axis_alignment(CrossAxisAlignment::Center),
+        )
         .into()
 }
 
 fn breadcrumb_label(text: &str, color: Color) -> Widget {
+    styled(text, 14.0, 20.0, FontWeight::W500, color)
+}
+
+fn styled(text: &str, size: f32, height: f32, weight: FontWeight, color: Color) -> Widget {
     Text::new(text)
         .style(
             TextStyle::new()
                 .font_family("Liberation Sans")
-                .font_size(14.0)
-                .line_height_absolute(20.0)
-                .font_weight(FontWeight::W500)
+                .font_size(size)
+                .line_height_absolute(height)
+                .font_weight(weight)
                 .color(color),
         )
         .into()
@@ -509,5 +721,34 @@ mod tests {
             let g = modal_geometry(width, height);
             assert_eq!((g.width, g.height, g.radius, g.framed), expected);
         }
+    }
+
+    #[test]
+    fn providers_uses_viewport_and_container_breakpoints_separately() {
+        let geometry = |w, h| provider_geometry(w, h, modal_geometry(w, h).width);
+        assert_eq!(
+            geometry(639.0, 800.0),
+            ProviderGeometry {
+                sidebar: 56.0,
+                page: 583.0,
+                gutter: 20.0,
+                card_height: None
+            }
+        );
+        assert_eq!(geometry(767.0, 800.0).sidebar, 56.0);
+        assert_eq!(geometry(768.0, 800.0).sidebar, 240.0);
+        assert_eq!(geometry(1135.0, 800.0).card_height, None);
+        assert_eq!(geometry(1136.0, 800.0).card_height, Some(624.0));
+        assert_eq!(
+            geometry(1280.0, 800.0),
+            ProviderGeometry {
+                sidebar: 240.0,
+                page: 896.0,
+                gutter: 24.0,
+                card_height: Some(624.0)
+            }
+        );
+        assert_eq!(geometry(1280.0, 640.0).card_height, Some(512.0));
+        assert_eq!(geometry(1280.0, 1100.0).card_height, Some(704.0));
     }
 }

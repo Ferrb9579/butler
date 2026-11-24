@@ -1,6 +1,7 @@
 mod empty_workspace;
 mod project_picker;
 mod provider_settings;
+mod settings_icons;
 mod ui;
 mod welcome;
 mod workspace;
@@ -95,7 +96,13 @@ fn application(
     let error = Signal::new(completed.err().map(|error| error.to_string()));
     let agents_open = Signal::new(true);
     let scratch_open = Signal::new(false);
-    let app = Application::new(move |_cx| {
+    let options = WindowOptions::new("Butler");
+    #[cfg(test)]
+    let options = WindowOptions {
+        initial_logical_size: Size::new(1280.0, 800.0),
+        ..options
+    };
+    let app = Application::new_with_options(options, move |_cx| {
         let root = if route.get() == Route::Welcome {
             let route = route.clone();
             let error_signal = error.clone();
