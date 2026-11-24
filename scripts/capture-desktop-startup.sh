@@ -32,17 +32,36 @@ capture_one() (
   set -euo pipefail
   local name=$1; shift
   local profile=${CAPTURE_PROFILE:-$name}
-  local runtime="$tmp/$profile" window="" tick dimensions
+  local runtime="$tmp/$profile" window="" tick dimensions ready="" window_pid
+  local log="$out/$name.log"
   mkdir -p -m 700 "$runtime"/{config,cache,data,state,run}
+  if [[ "$name" == t3-thread-find ]]; then
+    # The upstream release smoke launches the pinned executable directly and
+    # opens the thread by its DOM row. Use that known-good navigation only
+    # for this optional fixture, then keep the actual Electron window alive
+    # for the same X11 capture and OCR gates as before.
+    ready="$runtime/electron.ready"
+    set -- env ELECTRON_RUN_AS_NODE=1 timeout --kill-after=8s 210s "$1" \
+      "$(dirname -- "${BASH_SOURCE[0]}")/diagnose-reference-find.cjs" \
+      "$t3" "$out/t3-thread-find-renderer-diagnostic.json" "$ready"
+    # Only the helper's structured report is suitable for upload.
+    log=/dev/null
+  fi
   XDG_CONFIG_HOME="$runtime/config" XDG_CACHE_HOME="$runtime/cache" \
     XDG_DATA_HOME="$runtime/data" XDG_STATE_HOME="$runtime/state" \
-    XDG_RUNTIME_DIR="$runtime/run" "$@" >"$out/$name.log" 2>&1 &
+    XDG_RUNTIME_DIR="$runtime/run" "$@" >"$log" 2>&1 &
   local pid=$!
   trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
 
   # Both toolkits set _NET_WM_PID on their top-level client; ignore helper windows.
   for ((tick=0; tick<90; tick++)); do
-    kill -0 "$pid" 2>/dev/null || { cat "$out/$name.log" >&2; return 1; }
+    kill -0 "$pid" 2>/dev/null || { cat "$log" >&2; return 1; }
+    window_pid="$pid"
+    if [[ -n "$ready" ]]; then
+      if [[ ! -s "$ready" ]]; then sleep 1; continue; fi
+      read -r window_pid <"$ready" || return 1
+      [[ "$window_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$window_pid" 2>/dev/null || return 1
+    fi
     while read -r id; do
       local geometry
       geometry=$(xdotool getwindowgeometry --shell "$id" 2>/dev/null) || continue
@@ -51,13 +70,13 @@ capture_one() (
         window=$id
         break
       fi
-    done < <(xdotool search --onlyvisible --pid "$pid" 2>/dev/null || true)
+    done < <(xdotool search --onlyvisible --pid "$window_pid" 2>/dev/null || true)
     [[ -z "$window" ]] || break
     sleep 1
   done
   if [[ -z "$window" ]]; then
     xwininfo -root -tree >&2 || true
-    cat "$out/$name.log" >&2
+    cat "$log" >&2
     echo "No visible client window for $name (pid $pid)" >&2
     return 1
   fi
@@ -867,8 +886,10 @@ thread_find_count_label() {
 capture_native_thread_find() {
   local window=$1 app=$2 title=$3 coords x y anchor_y input title_crop deadline
   local prefix="$out/$app-thread-find" bar='278x92+988+37'
-  title_crop=$(thread_find_row_crop "$app") || return 1
-  click_project_control "$window" "$prefix-thread-row.png" "$title_crop" "$title" 11 || return 1
+  if [[ "$app" == butler ]]; then
+    title_crop=$(thread_find_row_crop "$app") || return 1
+    click_project_control "$window" "$prefix-thread-row.png" "$title_crop" "$title" 11 || return 1
+  fi
   deadline=$((SECONDS + 60))
   while (( SECONDS < deadline )); do
     "${capture[@]}" -window "$window" "$prefix-transcript.png" || return 1
@@ -985,30 +1006,6 @@ PY
   fi
 }
 
-t3_find_renderer_diagnostic() (
-  local source=$1 fixture_sha=$2
-  local profile="$tmp/t3-thread-find-renderer" report="$out/t3-thread-find-renderer-diagnostic.json"
-  local probe
-  probe="$(dirname -- "${BASH_SOURCE[0]}")/diagnose-reference-find.cjs"
-  [[ -f "$source" && ! -e /tmp/t3-launch-check-workspace && ! -L /tmp/t3-launch-check-workspace ]] || return 1
-  mkdir -p -m 700 "$profile"/{home,config,cache,data,state,run,t3-code/userdata} || return 1
-  cp -- "$source" "$profile/t3-code/userdata/statev2.sqlite" || return 1
-  printf '%s  %s\n' "$fixture_sha" "$profile/t3-code/userdata/statev2.sqlite" |
-    sha256sum --check --status || return 1
-
-  # Disposable follow-up only. Use the Playwright bundled in the pinned AppImage,
-  # retain Chromium's sandbox, and discard child logs, which may contain tokens.
-  HOME="$profile/home" T3CODE_HOME="$profile/t3-code" T3CODE_TELEMETRY_ENABLED=false \
-    T3CODE_DISABLE_AUTO_UPDATE=true GIT_ALLOW_PROTOCOL= GIT_TERMINAL_PROMPT=0 \
-    XDG_CONFIG_HOME="$profile/config" XDG_CACHE_HOME="$profile/cache" \
-    XDG_DATA_HOME="$profile/data" XDG_STATE_HOME="$profile/state" XDG_RUNTIME_DIR="$profile/run" \
-    ELECTRON_RUN_AS_NODE=1 timeout --kill-after=5s 60s "$t3/t3code" "$probe" "$t3" "$report" \
-    >/dev/null 2>&1 || true
-  if [[ ! -s "$report" ]]; then
-    printf '%s\n' '{"stage":"process","incomplete":true}' >"$report"
-  fi
-)
-
 verify_native_thread_find() {
   local source=$1 app name runtime binary before after state rc
   local fixture_sha='e65f15f89a847a264cf4366cd7bcdc31cef1d5fbfd07707ed497cc0f045357b5'
@@ -1022,6 +1019,7 @@ verify_native_thread_find() {
     'T3 Code v0.1.11 (59651c1761f6c63e9b6056839067066968e6a406), official scripts/fixtures/desktop-launch/statev2.sqlite (MIT, T3 Tools Inc.).' \
     "Reference fixture SHA256: $fixture_sha" \
     'See provenance.txt for Butler commit. No provider setup, prompt submission, or Return key is used.' \
+    'T3 opens the seeded thread with its bundled Playwright; both apps use real X11 pixels for verification and capture.' \
     'Each verified frame shows the existing transcript and the matching query/count. Raw diffs are diagnostic, not pixel parity.' \
     >"$notes" || return 1
   for app in t3 butler; do
@@ -1038,7 +1036,7 @@ verify_native_thread_find() {
         echo 'T3 Find fixture missing, checksum mismatched, or fixture workspace already exists; T3 not launched.' | tee -a "$notes" >&2
         continue
       fi
-      binary="$t3/AppRun"
+      binary="$t3/t3code"
     else
       binary="$butler"
       seed_butler_thread_find "$runtime" || continue
@@ -1051,9 +1049,6 @@ verify_native_thread_find() {
     if [[ "$app" == t3 ]]; then t3_find_diagnostic "$runtime/t3-code"; fi
     if (( rc != 0 )); then
       printf '%s: native Find diagnostic incomplete; see its unverified marker\n' "$app" | tee -a "$notes" >&2
-      if [[ "$app" == t3 ]]; then
-        t3_find_renderer_diagnostic "$source" "$fixture_sha" || true
-      fi
       continue
     fi
     if [[ "$app" == butler ]]; then

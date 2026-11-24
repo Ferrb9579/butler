@@ -1,5 +1,6 @@
-// Diagnostic only: run as Node using the already checksum-pinned T3 Electron binary.
-// Read the synthetic renderer; emit counts only. Native screenshots stay the gate.
+// Run as Node using the checksum-pinned T3 binary. Open the disposable fixture
+// using its real sidebar route, then keep that Electron window for X11 capture.
+// Emit counts and booleans only; the on-screen OCR remains the screenshot gate.
 "use strict";
 
 const path = require("node:path");
@@ -8,6 +9,11 @@ const { setTimeout: delay } = require("node:timers/promises");
 
 async function main() {
   let app;
+  const stop = new AbortController();
+  const onStop = () => stop.abort();
+  process.once("SIGTERM", onStop);
+  process.once("SIGINT", onStop);
+  const ready = process.argv[4];
   const failures = { page: 0, console: 0 };
   const report = (summary) => fs.writeFileSync(process.argv[3], JSON.stringify(summary) + "\n", {
     mode: 0o600,
@@ -74,6 +80,23 @@ async function main() {
       };
     }, { user, assistant });
     report({ stage: "complete", failures, ...summary });
+    if (ready !== undefined) {
+      if (!summary.user.phrase || !summary.user.intersectsViewport ||
+          !summary.assistant.phrase || !summary.assistant.intersectsViewport) {
+        process.exitCode = 1;
+        return;
+      }
+      const pid = app.process().pid;
+      if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid Electron PID");
+      // This private file tells bash which real window to capture, never how
+      // to evaluate a frame. Rename so bash can only see a complete PID.
+      fs.writeFileSync(`${ready}.tmp`, `${pid}\n`, { mode: 0o600, flag: "wx" });
+      fs.renameSync(`${ready}.tmp`, ready);
+      await Promise.race([
+        delay(155_000, undefined, { signal: stop.signal, ref: false }).catch(() => {}),
+        new Promise((resolve) => app.once("close", resolve)),
+      ]);
+    }
   } catch {
     // Never include Playwright errors, logs, HTML or URLs in the artifact.
     report({ stage, failures, incomplete: true });
@@ -84,6 +107,8 @@ async function main() {
       await Promise.race([app.close().catch(() => {}), delay(2_000, undefined, { ref: false })]);
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     }
+    process.off("SIGTERM", onStop);
+    process.off("SIGINT", onStop);
   }
 }
 
