@@ -1,7 +1,8 @@
 //! Local provider settings overlay. The canned provider is available to tests only.
 
-use crate::empty_workspace::{WHITE, label, space};
+use crate::empty_workspace::{WHITE, space};
 use crate::settings_icons::icon;
+use crate::typography;
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::profile::{Profile, Provider};
 use incular::{
@@ -479,7 +480,7 @@ fn details(
                 .child(
                     EditableText::new(names.inputs[selected].clone())
                         .placeholder("Provider display name")
-                        .style(TextStyle::new().font_size(14.0).color(INK))
+                        .style(typography::interface().font_size(14.0).color(INK))
                         .on_submit(move |_| rename.save(selected)),
                 )
                 .into(),
@@ -673,11 +674,19 @@ fn breadcrumb_label(text: &str, color: Color) -> Widget {
     styled(text, 14.0, 20.0, FontWeight::W500, color)
 }
 
+fn label(text: &str, size: f32, weight: FontWeight, color: Color) -> Widget {
+    let height = match size {
+        12.0 | 13.0 => 16.0,
+        14.0 => 20.0,
+        _ => 24.0,
+    };
+    styled(text, size, height, weight, color)
+}
+
 fn styled(text: &str, size: f32, height: f32, weight: FontWeight, color: Color) -> Widget {
     Text::new(text)
         .style(
-            TextStyle::new()
-                .font_family("Liberation Sans")
+            typography::interface()
                 .font_size(size)
                 .line_height_absolute(height)
                 .font_weight(weight)
@@ -694,11 +703,7 @@ pub fn action(text: &str, click: impl Fn() + 'static) -> Widget {
                 .background(PAGE)
                 .foreground(INK)
                 .variant(ButtonVariant::Ghost)
-                .text_style(
-                    TextStyle::new()
-                        .font_family("Liberation Sans")
-                        .font_size(14.0),
-                ),
+                .text_style(typography::interface().font_size(14.0)),
         )
         .on_click(click)
         .into()

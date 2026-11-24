@@ -2,6 +2,7 @@ mod empty_workspace;
 mod project_picker;
 mod provider_settings;
 mod settings_icons;
+mod typography;
 mod ui;
 mod welcome;
 mod workspace;
@@ -30,6 +31,7 @@ fn application(
     home: Option<PathBuf>,
     device: String,
 ) -> Result<Application, Box<dyn std::error::Error>> {
+    typography::register();
     let settings_open = Signal::new(false);
     let settings_provider = Signal::new(2_usize);
     #[cfg(test)]

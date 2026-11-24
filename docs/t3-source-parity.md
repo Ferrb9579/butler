@@ -45,8 +45,9 @@ an unrelated shade.
 Settings popup, sidebar and header now use the light-role palette. The
 reference default sans stack is `-apple-system, BlinkMacSystemFont, "Inter
 Variable", "Segoe UI", system-ui, sans-serif` (`index.css:168–175` and
-`main.tsx:4`). The current Butler font does not match; exact font embedding
-and platform fallback are separate from token and geometry parity.
+`main.tsx:4`). Butler Settings now uses the pinned Linux release’s Latin Inter Variable face.
+The other script subsets, platform-specific font precedence, user typography
+controls, and text shaping/rendering comparisons are still unverified.
 
 ## Implementation boundary
 
