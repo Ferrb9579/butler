@@ -22,3 +22,11 @@ The images differ across the full frame; do not use them as a pass/fail
 snapshot for a matched screen. [Original run and diff][startup-run].
 
 [startup-run]: https://github.com/Ferrb9579/butler/actions/runs/45318341970
+
+`welcome-fresh-light-1280x800.png` is the first comparable fresh Welcome
+fixture. Both were captured in [run 45321949520][welcome-run] (stable T3 Code
+v0.1.11; Butler `cf64dfd67d119ae00fe65bd8761f302525660cd2`). The raw diff is
+60,133 of 1,024,000 pixels (5.87%); different text, missing icons, clipped
+buttons, shifted spacing, and native window controls mean it is not parity.
+
+[welcome-run]: https://github.com/Ferrb9579/butler/actions/runs/45321949520

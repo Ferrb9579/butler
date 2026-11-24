@@ -54,6 +54,7 @@ jobs:
       - name: Capture both desktop windows
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
+          VERIFY_BUTLER_ONBOARDING: '1'
         run: |
           mkdir -p artifacts/ui-native
           printf 'T3 Code v0.1.11 (59651c1761f6c63e9b6056839067066968e6a406)\nButler %s\n' \

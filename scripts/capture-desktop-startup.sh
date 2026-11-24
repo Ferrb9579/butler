@@ -27,7 +27,8 @@ fi
 capture_one() (
   set -euo pipefail
   local name=$1; shift
-  local runtime="$tmp/$name" window="" tick dimensions
+  local profile=${CAPTURE_PROFILE:-$name}
+  local runtime="$tmp/$profile" window="" tick dimensions
   mkdir -p -m 700 "$runtime"/{config,cache,data,state,run}
   XDG_CONFIG_HOME="$runtime/config" XDG_CACHE_HOME="$runtime/cache" \
     XDG_DATA_HOME="$runtime/data" XDG_STATE_HOME="$runtime/state" \
@@ -72,7 +73,38 @@ capture_one() (
     echo "$name capture is blank or did not finish rendering" >&2
     return 1
   fi
+  if [[ "$name" == butler && "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
+    # Coordinates refer to the fixed-size Welcome fixture captured above.
+    # Check durable state and a rendered route, not only a successful X11 click.
+    [[ ! -e "$runtime/state/butler/onboarding" ]]
+    xdotool mousemove --window "$window" 365 620 click 1
+    xdotool mousemove 1390 890
+    for ((tick=0; tick<15; tick++)); do
+      [[ -f "$runtime/state/butler/onboarding" ]] && break
+      kill -0 "$pid" 2>/dev/null || return 1
+      sleep 1
+    done
+    if ! grep -qx 'butler-onboarding-complete-v1' "$runtime/state/butler/onboarding"; then
+      echo "Welcome skip did not persist onboarding completion" >&2
+      return 1
+    fi
+    sleep 2
+    "${capture[@]}" -window "$window" "$out/butler-after-welcome.png"
+    assert_dark_workspace "$out/butler-after-welcome.png"
+  elif [[ "$name" == butler-reopened ]]; then
+    assert_dark_workspace "$out/$name-startup.png"
+  fi
 )
+
+assert_dark_workspace() {
+  # The draft workspace uses a dark canvas; Welcome uses a light one.
+  local is_dark
+  is_dark=$("${identify[@]}" -format '%[fx:p{640,400}.intensity<0.15]' "$1")
+  if [[ "$is_dark" != 1 ]]; then
+    echo "Expected the current dark workspace route in $1" >&2
+    return 1
+  fi
+}
 
 capture_one t3 "$t3/AppRun"
 capture_one butler "$butler"
@@ -85,3 +117,7 @@ if (( rc > 1 )); then
 fi
 # Startup defaults are diagnostic, not a parity check on a matched fixture.
 printf 'Native startup differing pixels: %s\n' "$(cat "$out/differing-pixels.txt")"
+if [[ "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
+  CAPTURE_PROFILE=butler capture_one butler-reopened "$butler"
+  echo "Welcome skip and profile restart smoke test passed"
+fi

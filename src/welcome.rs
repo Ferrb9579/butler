@@ -1,5 +1,5 @@
 use incular::{
-    controls::{Button, ButtonStyle},
+    controls::{Button, ButtonStyle, ButtonVariant},
     prelude::*,
 };
 
@@ -35,17 +35,17 @@ pub fn view(
                     FontWeight::W400,
                     MUTED,
                 ),
-                gap(40.0),
+                gap(48.0),
                 divider(),
                 gap(18.0),
                 agents_section(narrow, expanded, agents_open.clone()),
-                gap(20.0),
-                divider(),
-                gap(12.0),
-                phone_section(narrow),
-                gap(12.0),
-                divider(),
                 gap(16.0),
+                divider(),
+                gap(18.0),
+                phone_section(narrow),
+                gap(18.0),
+                divider(),
+                gap(24.0),
                 actions(narrow, complete.clone()),
             ];
             if let Some(error) = &error {
@@ -76,7 +76,7 @@ fn agents_section(narrow: bool, expanded: bool, agents_open: Signal<bool>) -> Wi
     } else {
         "+   Set up an agent   ▾"
     })
-    .style(button_style(32.0, BACKGROUND, INK))
+    .style(button_style(32.0, BACKGROUND, INK).variant(ButtonVariant::Ghost))
     .on_click(move || agents_open.update(|open| *open = !*open));
     let mut right: Vec<Widget> = vec![
         Container::new()
@@ -85,6 +85,7 @@ fn agents_section(narrow: bool, expanded: bool, agents_open: Signal<bool>) -> Wi
             .into(),
     ];
     if expanded {
+        right.push(gap(6.0));
         let left = [
             ("Antigravity", "Turn on"),
             ("Codex", "Set up"),
@@ -167,7 +168,7 @@ fn agent((name, action): (&str, &str)) -> Widget {
 
 fn actions(narrow: bool, complete: impl Fn() + 'static) -> Widget {
     let bypass: Widget = Button::new("Start without an agent")
-        .style(button_style(32.0, BACKGROUND, MUTED))
+        .style(button_style(32.0, BACKGROUND, MUTED).variant(ButtonVariant::Ghost))
         .on_click(complete)
         .into();
     let start: Widget = Row::new(vec![
@@ -205,6 +206,11 @@ fn button_style(height: f32, background: Color, foreground: Color) -> ButtonStyl
         .height(height)
         .background(background)
         .foreground(foreground)
+        .padding(EdgeInsets::symmetric(
+            if height <= 24.0 { 7.0 } else { 12.0 },
+            0.0,
+        ))
+        .text_style(TextStyle::new().font_size(if height <= 24.0 { 12.0 } else { 14.0 }))
         .border_radius(8.0)
 }
 
