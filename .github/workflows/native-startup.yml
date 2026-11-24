@@ -8,6 +8,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/capture-desktop-startup.sh'
+      - 'scripts/diagnose-reference-find.cjs'
       - 'src/**'
   workflow_dispatch:
 

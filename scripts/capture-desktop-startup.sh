@@ -985,6 +985,30 @@ PY
   fi
 }
 
+t3_find_renderer_diagnostic() (
+  local source=$1 fixture_sha=$2
+  local profile="$tmp/t3-thread-find-renderer" report="$out/t3-thread-find-renderer-diagnostic.json"
+  local probe
+  probe="$(dirname -- "${BASH_SOURCE[0]}")/diagnose-reference-find.cjs"
+  [[ -f "$source" && ! -e /tmp/t3-launch-check-workspace && ! -L /tmp/t3-launch-check-workspace ]] || return 1
+  mkdir -p -m 700 "$profile"/{home,config,cache,data,state,run,t3-code/userdata} || return 1
+  cp -- "$source" "$profile/t3-code/userdata/statev2.sqlite" || return 1
+  printf '%s  %s\n' "$fixture_sha" "$profile/t3-code/userdata/statev2.sqlite" |
+    sha256sum --check --status || return 1
+
+  # Disposable follow-up only. Use the Playwright bundled in the pinned AppImage,
+  # retain Chromium's sandbox, and discard child logs, which may contain tokens.
+  HOME="$profile/home" T3CODE_HOME="$profile/t3-code" T3CODE_TELEMETRY_ENABLED=false \
+    T3CODE_DISABLE_AUTO_UPDATE=true GIT_ALLOW_PROTOCOL= GIT_TERMINAL_PROMPT=0 \
+    XDG_CONFIG_HOME="$profile/config" XDG_CACHE_HOME="$profile/cache" \
+    XDG_DATA_HOME="$profile/data" XDG_STATE_HOME="$profile/state" XDG_RUNTIME_DIR="$profile/run" \
+    ELECTRON_RUN_AS_NODE=1 timeout --kill-after=5s 60s "$t3/t3code" "$probe" "$t3" "$report" \
+    >/dev/null 2>&1 || true
+  if [[ ! -s "$report" ]]; then
+    printf '%s\n' '{"stage":"process","incomplete":true}' >"$report"
+  fi
+)
+
 verify_native_thread_find() {
   local source=$1 app name runtime binary before after state rc
   local fixture_sha='e65f15f89a847a264cf4366cd7bcdc31cef1d5fbfd07707ed497cc0f045357b5'
@@ -1027,6 +1051,9 @@ verify_native_thread_find() {
     if [[ "$app" == t3 ]]; then t3_find_diagnostic "$runtime/t3-code"; fi
     if (( rc != 0 )); then
       printf '%s: native Find diagnostic incomplete; see its unverified marker\n' "$app" | tee -a "$notes" >&2
+      if [[ "$app" == t3 ]]; then
+        t3_find_renderer_diagnostic "$source" "$fixture_sha" || true
+      fi
       continue
     fi
     if [[ "$app" == butler ]]; then
