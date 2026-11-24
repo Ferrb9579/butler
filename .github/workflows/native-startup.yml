@@ -56,6 +56,7 @@ jobs:
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
           VERIFY_BUTLER_ONBOARDING: '1'
+          VERIFY_BUTLER_NEW_PROJECT: '1'
           CAPTURE_REFERENCE_LANDING: '1'
         run: |
           mkdir -p artifacts/ui-native

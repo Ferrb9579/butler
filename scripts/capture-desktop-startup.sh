@@ -10,6 +10,8 @@ butler=$(realpath "$2")
 out=$(realpath -m "$3")
 width=1280
 height=800
+new_project_title='Native Created Project'
+new_project_slug='native-created-project'
 mkdir -p "$out"
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
@@ -67,6 +69,8 @@ capture_one() (
     await_text "$window" "$out/$name-startup.png" 'Start without an agent' '240x42+270+601'
   elif [[ "$name" == butler-project-reopened ]]; then
     await_text "$window" "$out/$name-startup.png" 'ParityFixture'
+  elif [[ "$name" == butler-created-project-reopened ]]; then
+    await_new_project_workspace "$window" "$out/$name-startup.png"
   else
     await_text "$window" "$out/$name-startup.png" 'What should we work on' '465x103+535+355'
   fi
@@ -155,6 +159,10 @@ capture_one() (
     grep -Fxq "$project_fixture" "$runtime/state/butler/local-projects"
     [[ "$(git -C "$project_fixture" rev-parse --show-toplevel)" == "$project_fixture" ]]
     [[ -z "$(git -C "$project_fixture" status --porcelain)" ]]
+  elif [[ "$name" == butler-create-project ]]; then
+    create_native_project "$window" "$runtime/state/butler"
+  elif [[ "$name" == butler-created-project-reopened ]]; then
+    assert_new_project_files "$runtime/state/butler"
   fi
 )
 
@@ -319,6 +327,115 @@ verify_scratch_draft() {
   assert_provider_gate "$window" "$prefix-scratch.png"
 }
 
+await_project_phrase() {
+  local window=$1 file=$2 crop=$3 phrase=$4 psm=$5 coords tick
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$file" || return 1
+    if coords=$(settings_phrase "$file" "$crop" "$phrase" "$psm"); then
+      printf '%s\n' "$coords"
+      return 0
+    fi
+    sleep 0.4
+  done
+  printf 'Could not find "%s" in %s (crop %s)\n' "$phrase" "$file" "$crop" >&2
+  return 1
+}
+
+click_project_control() {
+  local window=$1; shift
+  local coords x y
+  coords=$(await_project_phrase "$window" "$@") || return 1
+  read -r x y <<<"$coords"
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 || return 1
+  xdotool mousemove 1390 890
+}
+
+await_new_project_workspace() {
+  local window=$1 file=$2 tick
+  # The title must be in the workspace header, not still in the picker or
+  # preview. Match the rendered no-provider workspace, not just its title.
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$file" || return 1
+    if settings_phrase "$file" '450x80+245+4' "$new_project_title" 11 >/dev/null &&
+       settings_phrase "$file" '600x64+295+333' \
+         'Enable a provider in Settings to send a message' 7 >/dev/null; then
+      return 0
+    fi
+    sleep 0.4
+  done
+  printf 'Could not verify the project workspace title and provider gate in %s\n' "$file" >&2
+  return 1
+}
+
+assert_new_project_files() {
+  local profile=$1 root canonical tracked registry
+  root="$profile/projects/$new_project_slug"
+  canonical=$(realpath -e -- "$root") || return 1
+  [[ "$canonical" == "$root" && -d "$root/.git" ]] || return 1
+  [[ "$(git -C "$root" rev-parse --show-toplevel)" == "$canonical" ]] || return 1
+  grep -Fxq -- "# $new_project_title" "$root/README.md" || return 1
+  [[ -s "$root/assets/icon.svg" ]] || return 1
+  # ls-files visits the index both after commit and when no Git identity is
+  # configured and Butler leaves the two files staged instead.
+  tracked=$(git -C "$root" ls-files) || return 1
+  [[ "$tracked" == $'README.md\nassets/icon.svg' ]] || return 1
+  registry=$(cat -- "$profile/local-projects") || return 1
+  [[ "$registry" == "$(printf '%s\ntitle\t"%s"' "$canonical" "$new_project_title")" ]]
+}
+
+create_native_project() {
+  local window=$1 profile=$2
+  [[ ! -e "$profile/local-projects" && ! -e "$profile/projects/$new_project_slug" ]] || return 1
+  # The landing button, source palette and inherited input row bounds are
+  # from the existing 1280×800 import captures. A crop only limits OCR;
+  # the script never clicks without a recognized, exact control label.
+  click_project_control "$window" "$out/butler-create-project-landing.png" \
+    '160x40+604+442' 'Add project' 7 || return 1
+  click_project_control "$window" "$out/butler-create-project-sources.png" \
+    '574x240+353+81' 'New project' 11 || return 1
+  click_project_control "$window" "$out/butler-create-project-name.png" \
+    '510x40+390+84' 'Project name' 7 || return 1
+  xdotool type --clearmodifiers "$new_project_title" || return 1
+  await_project_phrase "$window" "$out/butler-create-project-named.png" \
+    '510x40+390+84' "$new_project_title" 7 >/dev/null || return 1
+  click_project_control "$window" "$out/butler-create-project-submit.png" \
+    '574x240+353+81' 'Create' 11 || return 1
+  await_new_project_workspace "$window" "$out/butler-created-project.png" || return 1
+  assert_new_project_files "$profile" || {
+    echo 'Created workspace rendered, but its local Git scaffold or project registry did not match' >&2
+    return 1
+  }
+}
+
+verify_native_new_project() {
+  local profile='butler-new-project' location rc
+  location="$tmp/$profile/state/butler"
+  touch "$out/butler-create-project-unverified" "$out/butler-created-project-reopened-unverified"
+  # Onboarding has its own native check. Seed only its documented marker
+  # here, keeping this profile isolated from the existing import and About fixtures.
+  mkdir -p "$location"
+  printf '%s\n' 'butler-onboarding-complete-v1' >"$location/onboarding"
+  set +e
+  CAPTURE_PROFILE="$profile" capture_one butler-create-project "$butler"
+  rc=$?
+  set -e
+  if (( rc != 0 )); then
+    echo 'Requested native New project smoke failed; see butler-create-project-unverified' >&2
+    return 1
+  fi
+  rm -f -- "$out/butler-create-project-unverified"
+  set +e
+  CAPTURE_PROFILE="$profile" capture_one butler-created-project-reopened "$butler"
+  rc=$?
+  set -e
+  if (( rc != 0 )); then
+    echo 'Requested native New project reopen failed; see butler-created-project-reopened-unverified' >&2
+    return 1
+  fi
+  rm -f -- "$out/butler-created-project-reopened-unverified"
+  echo 'Native New project creation, local Git scaffold, and title after restart verified'
+}
+
 set +e
 capture_one t3 "$t3/AppRun"
 reference_rc=$?
@@ -395,4 +512,7 @@ fi
 if [[ -e "$out/t3-landing-unverified" ]]; then
   echo "T3 Code post-onboarding state was not verified" >&2
   exit 1
+fi
+if [[ "${VERIFY_BUTLER_NEW_PROJECT:-0}" == 1 ]]; then
+  verify_native_new_project
 fi
