@@ -168,3 +168,20 @@ interaction and counts in this fixture, not visual parity.
 - Original 1280×800 X11 frames from [native run 45433209304](https://github.com/Ferrb9579/butler/actions/runs/45433209304), [artifact 14939738090](https://github.com/Ferrb9579/butler/actions/runs/45433209304/artifacts/14939738090). T3 Code v0.1.11 was pinned to `59651c1761f6c63e9b6056839067066968e6a406`; Butler was `aa8ca966c86fc4cef0af03748f8e1e3f6e17c09e`.
 - Both use the same disposable local checkout and selected synthetic transcript. The actual branch `copperleaf` appears in each inline Details card and is absent in the non-Git controls. No remote, provider, branch action, or clipboard interaction was used.
 - 271,013 of 1,024,000 raw pixels differ. This matches the visible branch state, not the rest of the card or pixel parity.
+
+## Saved assistant Markdown paragraphs (native behavior and layout)
+
+| State | T3 Code | Butler | Raw differing pixels |
+| --- | --- | --- | --- |
+| Soft line break: `line continues`, `1/1` | [PNG](t3/saved-assistant-markdown-soft-break-light-1280x800.png) | [PNG](butler/saved-assistant-markdown-soft-break-light-1280x800.png) | 268,603 of 1,024,000 |
+| Paragraph boundary: `here. Second`, `0/0` | [PNG](t3/saved-assistant-markdown-paragraph-boundary-light-1280x800.png) | [PNG](butler/saved-assistant-markdown-paragraph-boundary-light-1280x800.png) | 267,897 of 1,024,000 |
+
+Original unchanged 1280×800 X11 captures from
+[native run 45441515696](https://github.com/Ferrb9579/butler/actions/runs/45441515696)
+and [artifact 14942874898](https://github.com/Ferrb9579/butler/actions/runs/45441515696/artifacts/14942874898).
+T3 Code v0.1.11 was `59651c1761f6c63e9b6056839067066968e6a406`; Butler was
+`7780aa5d769462d6f4c1a718f9cdc5138fa2cc87`. The synthetic saved reply is
+identical, both paragraphs are visible, and both Find states passed. The
+before-Find originals remain in the artifact. No provider was used. This
+does not verify unsupported Markdown, match background (IG-008), or pixel
+parity; the sidebar, composer and window chrome still differ.
