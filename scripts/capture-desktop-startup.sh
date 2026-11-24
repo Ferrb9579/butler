@@ -677,9 +677,10 @@ await_thread_draft() {
   local window=$1 file=$2 title=$3 tick
   for ((tick=0; tick<15; tick++)); do
     "${capture[@]}" -window "$window" "$file" || return 1
-    # Exclude the left breadcrumb glyph. Its clipped pixels drove the
-    # confidence of otherwise correct Project Alpha text to 0 in 45376452356.
-    if settings_phrase "$file" '245x31+290+5' "$title New thread" 7 >/dev/null &&
+    # Assert the selected workspace and actual blank draft content. The
+    # responsive breadcrumb gets its own geometry regression.
+    if settings_phrase "$file" '380x33+485+290' "$title" 7 >/dev/null &&
+       settings_phrase "$file" '480x58+393+246' 'What should we work on' 7 >/dev/null &&
        settings_phrase "$file" '600x64+295+333' \
          'Enable a provider in Settings to send a message' 7 >/dev/null; then
       return 0

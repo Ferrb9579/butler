@@ -8,7 +8,7 @@ use crate::sidebar_search::{self, Search};
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::threads::{Conversation, ThreadSummary};
 use incular::prelude::*;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, icon_label, label, sidebar, space};
 
@@ -31,7 +31,10 @@ pub fn draft(
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
     let title = project.clone().unwrap_or_else(|| "No project".into());
-    let project_crumb = workspace_project(project.as_deref(), project_icon.as_ref(), start_here);
+    let project_title = title.clone();
+    let has_project = project.is_some();
+    let header_icon = project_icon.clone();
+    let start_here = Rc::new(start_here);
     let selected = selected.map(Rc::new);
     let rendered_query = search.query();
     let sidebar_settings = open_settings.clone();
@@ -205,11 +208,16 @@ pub fn draft(
                                 // Leave room for the divider, both gaps, and the
                                 // 40px minimum of the current-thread breadcrumb.
                                 let maximum = (constraints.max_width() - 72.0).max(0.0);
+                                let width = (20.0 + word_advance(&project_title)).min(maximum);
+                                let action = start_here.clone();
                                 Row::new(vec![
-                                    Container::new()
-                                        .constraints(Constraints::new(0.0, maximum, 0.0, 28.0))
-                                        .child(project_crumb.clone())
-                                        .into(),
+                                    workspace_project(
+                                        &project_title,
+                                        header_icon.as_ref(),
+                                        has_project,
+                                        width,
+                                        move || action(),
+                                    ),
                                     breadcrumb_text("/", MUTED),
                                     Expanded::new(breadcrumb_text(&route_title, INK)).into(),
                                 ])
@@ -280,42 +288,57 @@ pub fn draft(
     .into()
 }
 
+fn breadcrumb_style(color: Color) -> TextStyle {
+    crate::typography::interface()
+        .font_size(14.0)
+        .font_weight(FontWeight::W500)
+        .color(color)
+}
+
 fn breadcrumb_text(text: &str, color: Color) -> Widget {
     Text::new(text)
-        .style(
-            crate::typography::interface()
-                .font_size(14.0)
-                .font_weight(FontWeight::W500)
-                .color(color),
-        )
+        .style(breadcrumb_style(color))
         .max_lines(Some(1))
         .overflow(TextOverflow::Ellipsis)
         .into()
 }
 
+thread_local! {
+    static CRUMB_TEXT: RefCell<incular::text::TextEngine> = RefCell::new(incular::text::TextEngine::new());
+}
+
+fn word_advance(text: &str) -> f32 {
+    CRUMB_TEXT.with_borrow_mut(|engine| {
+        engine
+            .layout(text, &breadcrumb_style(MUTED), None, TextAlign::Start)
+            .lines
+            .first()
+            .map_or(0.0, |line| line.width.ceil())
+    })
+}
+
 fn workspace_project(
-    project: Option<&str>,
+    title: &str,
     project_icon: Option<&incular::image::ImageHandle>,
+    has_project: bool,
+    width: f32,
     start_here: impl Fn() + 'static,
 ) -> Widget {
-    let title = project.unwrap_or("No project");
-    let mark = match project {
-        Some(title) => crate::project_icon_view::project_mark(title, project_icon, 14.0),
-        None => icon("message-square-dashed", 14.0, MUTED),
+    let mark = if has_project {
+        crate::project_icon_view::project_mark(title, project_icon, 14.0)
+    } else {
+        icon("message-square-dashed", 14.0, MUTED)
     };
-    let contents: Widget = Row::new(vec![
+    let contents = Row::new(vec![
         mark,
-        Flexible::new(breadcrumb_text(title, MUTED)).into(),
+        Expanded::new(breadcrumb_text(title, MUTED)).into(),
     ])
-    .main_axis_size(MainAxisSize::Min)
     .cross_axis_alignment(CrossAxisAlignment::Center)
-    .spacing(6.0)
-    .into();
-    // T3's breadcrumb is inline-flex rather than a full-width aligned
-    // button. Let the constrained child report its natural width directly.
+    .spacing(6.0);
+    let contents = SizedBox::new().width(width).child(contents);
     incular::widgets::internal::ActionSurface::with_child(contents)
         .label(format!("New thread in {title}"))
-        .size(Size::new(0.0, 28.0))
+        .size(Size::new(width, 28.0))
         .mouse_cursor(incular::widgets::MouseCursor::Click)
         .on_press(start_here)
         .into()
