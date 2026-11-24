@@ -25,6 +25,49 @@ impl Profile {
         self.directory.join("onboarding")
     }
 
+    pub fn provider_name(&self, provider: Provider) -> io::Result<String> {
+        let file = match File::open(self.directory.join(provider.filename())) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(provider.label().into()),
+            Err(e) => return Err(e),
+        };
+        let mut name = String::new();
+        file.take(257).read_to_string(&mut name)?;
+        if name.is_empty() || name.chars().count() > 64 || name.chars().any(char::is_control) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid stored provider name.",
+            ));
+        }
+        Ok(name)
+    }
+
+    pub fn save_provider_name(&self, provider: Provider, name: &str) -> io::Result<String> {
+        let name = name.trim();
+        if name.chars().count() > 64 || name.chars().any(char::is_control) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Use at most 64 characters on one line.",
+            ));
+        }
+        let name = if name.is_empty() {
+            provider.label()
+        } else {
+            name
+        };
+        fs::create_dir_all(&self.directory)?;
+        let (path, mut file) = self.create_pending_file("provider")?;
+        let result = (|| {
+            file.write_all(name.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&path, self.directory.join(provider.filename()))?;
+            sync_directory(&self.directory)
+        })();
+        let _ = fs::remove_file(path);
+        result.map(|()| name.into())
+    }
+
     pub fn onboarding_completed(&self) -> io::Result<bool> {
         let file = match File::open(self.marker()) {
             Ok(file) => file,
@@ -49,7 +92,7 @@ impl Profile {
             return Ok(());
         }
         fs::create_dir_all(&self.directory)?;
-        let (path, mut file) = self.create_pending_marker()?;
+        let (path, mut file) = self.create_pending_file("onboarding")?;
         let result = (|| {
             file.write_all(COMPLETED_V1)?;
             file.sync_all()?;
@@ -66,17 +109,44 @@ impl Profile {
         result
     }
 
-    fn create_pending_marker(&self) -> io::Result<(PathBuf, File)> {
+    fn create_pending_file(&self, kind: &str) -> io::Result<(PathBuf, File)> {
         loop {
             let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
             let path = self
                 .directory
-                .join(format!(".onboarding-{}-{sequence}", std::process::id()));
+                .join(format!(".{kind}-{}-{sequence}", std::process::id()));
             match OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(file) => return Ok((path, file)),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(error),
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Provider {
+    Codex,
+    Claude,
+    Cursor,
+}
+
+impl Provider {
+    pub const ALL: [Self; 3] = [Self::Codex, Self::Claude, Self::Cursor];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Claude => "Claude",
+            Self::Cursor => "Cursor",
+        }
+    }
+
+    fn filename(self) -> &'static str {
+        match self {
+            Self::Codex => "provider-name-codex",
+            Self::Claude => "provider-name-claude",
+            Self::Cursor => "provider-name-cursor",
         }
     }
 }

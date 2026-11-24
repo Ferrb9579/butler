@@ -35,6 +35,7 @@ fn application(
     #[cfg(test)]
     let fixture = offline_fixture::Fixture::new(state.clone());
     let profile = state.as_ref().map(Profile::new);
+    let provider_names = provider_settings::Names::new(profile.clone());
     let history_store = state.as_ref().map(ThreadStore::new);
     let projects = state.map(LocalProjects::new);
     let saved_project = projects.as_ref().map(LocalProjects::list).transpose();
@@ -273,6 +274,7 @@ fn application(
                     desktop,
                     &device,
                     settings_provider.clone(),
+                    provider_names.clone(),
                     move || {
                         settings_open.set(false);
                     },
@@ -557,6 +559,40 @@ mod ui_tests {
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].root, root.canonicalize().unwrap());
     }
+    #[test]
+    fn saves_provider_display_name_locally_and_reopens_it() {
+        use butler::profile::Provider;
+        let tmp = Fixture::new();
+        let root = tmp.0.join("profile");
+        let profile = Profile::new(&root);
+        profile.complete_onboarding().unwrap();
+        let mut app =
+            application(Some(root.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open provider settings").unwrap();
+            sim.focus("Provider display name").unwrap();
+            sim.key_down("ControlLeft".parse().unwrap()).unwrap();
+            sim.press("KeyA".parse().unwrap()).unwrap();
+            sim.key_up("ControlLeft".parse().unwrap()).unwrap();
+            sim.type_text("Cursor Local").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.click("Cursor Local").unwrap();
+        });
+        assert_eq!(
+            profile.provider_name(Provider::Cursor).unwrap(),
+            "Cursor Local"
+        );
+        assert_eq!(profile.provider_name(Provider::Claude).unwrap(), "Claude");
+        drop(app);
+        let mut app = application(Some(root), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open provider settings").unwrap();
+            sim.click("Cursor Local").unwrap();
+        });
+    }
+
     #[test]
     fn opens_provider_settings_then_tests_first_send_offline() {
         let tmp = Fixture::new();
