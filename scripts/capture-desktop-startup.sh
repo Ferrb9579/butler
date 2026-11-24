@@ -88,7 +88,11 @@ capture_one() (
       xdotool windowfocus "$window" mousemove --window "$window" 670 462 click 1
       xdotool mousemove 1390 890
       if await_text "$window" "$out/t3-add-project.png" 'Local folder'; then
-        xdotool windowfocus "$window" key Escape
+        xdotool windowfocus "$window" mousemove --window "$window" 438 230 click 1
+        xdotool mousemove 1390 890
+        sleep 2
+        "${capture[@]}" -window "$window" "$out/t3-local-folder.png"
+        xdotool windowfocus "$window" key Escape Escape
         await_text "$window" "$out/t3-after-welcome.png" 'What should we work on' '465x103+535+355'
       else
         xdotool windowfocus "$window" key Escape
@@ -123,12 +127,14 @@ capture_one() (
   elif [[ "$name" == butler-import ]]; then
     xdotool windowfocus "$window" mousemove --window "$window" 670 462 click 1
     xdotool mousemove 1390 890
-    await_text "$window" "$out/butler-add-project.png" 'Local folder'
-    click_label "$window" "$out/butler-add-project.png" 'Local folder'
-    await_text "$window" "$out/butler-local-folder.png" 'Absolute folder path'
-    click_label "$window" "$out/butler-local-folder.png" 'Absolute folder path'
+    await_text "$window" "$out/butler-add-project.png" 'Local folder' '260x24+365+214'
+    xdotool windowfocus "$window" mousemove --window "$window" 438 230 click 1
+    xdotool mousemove 1390 890
+    await_text "$window" "$out/butler-local-folder.png" 'Absolute folder path' '270x40+390+84'
+    xdotool windowfocus "$window" mousemove --window "$window" 456 104 click 1
     xdotool type --clearmodifiers "$project_fixture"
-    click_label "$window" "$out/butler-local-folder.png" 'Open folder'
+    await_text "$window" "$out/butler-local-folder-typed.png" 'ParityFixture' '510x40+390+84'
+    xdotool windowfocus "$window" mousemove --window "$window" 419 178 click 1
     xdotool mousemove 1390 890
     await_text "$window" "$out/butler-imported.png" 'ParityFixture'
     grep -Fxq "$project_fixture" "$runtime/state/butler/local-projects"
@@ -163,27 +169,6 @@ await_text() {
   done
   printf 'Expected text "%s" in %s; last recognized text:\n%s\n' "$expected" "$file" "$actual" >&2
   return 1
-}
-
-# Click an actual rendered label instead of relying on intermediate picker coordinates.
-click_label() {
-  local window=$1 file=$2 label=$3 position x y
-  position=$(tesseract "$file" stdout --psm 11 tsv 2>/dev/null |
-    awk -F '\t' -v label="$label" '
-      $1 == 5 && $12 != "" {
-        key = $2 FS $3 FS $4 FS $5
-        if (s[key] == "") { left[key] = $7; y[key] = $8 + int($10 / 2) }
-        s[key] = s[key] (s[key] == "" ? "" : " ") $12
-        right[key] = $7 + $9
-      }
-      END { for (k in s) if (tolower(s[k]) == tolower(label)) { print int((left[k]+right[k])/2), y[k]; exit } }
-    ')
-  if [[ -z "$position" ]]; then
-    printf 'Cannot locate label "%s" in %s\n' "$label" "$file" >&2
-    return 1
-  fi
-  read -r x y <<<"$position"
-  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1
 }
 
 assert_provider_gate() {
