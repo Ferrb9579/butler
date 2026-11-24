@@ -105,3 +105,15 @@ not a pixel parity pass.
   passed automated verification in both apps.
 
 [git-url-run]: https://github.com/Ferrb9579/butler/actions/runs/45374623866
+
+## Git URL destination (diagnostic pair)
+
+[T3 Code](t3/git-url-destination-light-1280x800.png) · [Butler](butler/git-url-destination-light-1280x800.png)
+
+[Native run 45376452356](https://github.com/Ferrb9579/butler/actions/runs/45376452356)
+verified both original 1280×800 light-mode destination screens, T3 Code v0.1.11
+(`59651c1761f6c63e9b6056839067066968e6a406`) and Butler
+`461e1d99e341d6ea9a4f93393c54cd6d054ae22c`. Both show the same synthetic Git
+URL and `~/CaseRepo` preview. Continue was the last action; no Clone,
+checkout, or remote request was tested. Layout, footer, and window chrome
+still differ.
