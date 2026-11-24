@@ -552,6 +552,8 @@ name = "butler"
 version = "0.1.0"
 dependencies = [
  "icu_normalizer",
+ "icu_properties",
+ "icu_segmenter",
  "incular",
  "rustix 1.1.6",
  "serde",

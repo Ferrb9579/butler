@@ -25,10 +25,12 @@ pub fn draft(
     add_project: Option<impl Fn() + Clone + 'static>,
     open_thread: impl Fn(uuid::Uuid, Option<(MessageHit, String)>) + Clone + 'static,
     new_thread: impl Fn() + Clone + 'static,
+    start_here: impl Fn() + 'static,
     open_settings: impl Fn() + Clone + 'static,
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
     let title = project.clone().unwrap_or_else(|| "No project".into());
+    let project_crumb = workspace_project(project.as_deref(), start_here);
     let selected = selected.map(Rc::new);
     let rendered_query = search.query();
     let sidebar_settings = open_settings.clone();
@@ -197,12 +199,22 @@ pub fn draft(
                             .height(40.0)
                             .padding(EdgeInsets::symmetric(20.0, 0.0))
                             .alignment(Alignment::CENTER_LEFT)
-                            .child(label(
-                                &format!("⬚ {title}   /   {route_title}"),
-                                14.0,
-                                FontWeight::W500,
-                                INK,
-                            )),
+                            .child(LayoutBuilder::new(move |_, constraints| {
+                                // Leave room for the divider, both gaps, and the
+                                // 40px minimum of the current-thread breadcrumb.
+                                let maximum = (constraints.max_width() - 72.0).max(0.0);
+                                Row::new(vec![
+                                    Container::new()
+                                        .constraints(Constraints::new(0.0, maximum, 0.0, 28.0))
+                                        .child(project_crumb.clone())
+                                        .into(),
+                                    breadcrumb_text("/", MUTED),
+                                    Expanded::new(breadcrumb_text(&route_title, INK)).into(),
+                                ])
+                                .spacing(12.0)
+                                .cross_axis_alignment(CrossAxisAlignment::Center)
+                                .into()
+                            })),
                     ),
                     Expanded::new(LayoutBuilder::new(move |_, constraints| {
                         let width = constraints.max_width();
@@ -264,6 +276,46 @@ pub fn draft(
     ])
     .cross_axis_alignment(CrossAxisAlignment::Stretch)
     .into()
+}
+
+fn breadcrumb_text(text: &str, color: Color) -> Widget {
+    Text::new(text)
+        .style(
+            crate::typography::interface()
+                .font_size(14.0)
+                .font_weight(FontWeight::W500)
+                .color(color),
+        )
+        .max_lines(Some(1))
+        .overflow(TextOverflow::Ellipsis)
+        .into()
+}
+
+fn workspace_project(project: Option<&str>, start_here: impl Fn() + 'static) -> Widget {
+    let title = project.unwrap_or("No project");
+    let mark = match project {
+        Some(title) => crate::project_identity::widget(title, 14.0, false),
+        None => icon("message-square-dashed", 14.0, MUTED),
+    };
+    let contents: Widget = Row::new(vec![
+        mark,
+        Flexible::new(breadcrumb_text(title, MUTED)).into(),
+    ])
+    .main_axis_size(MainAxisSize::Min)
+    .cross_axis_alignment(CrossAxisAlignment::Center)
+    .spacing(6.0)
+    .into();
+    Button::with_child(format!("New thread in {title}"), contents)
+        .style(
+            ButtonStyle::new()
+                .variant(ButtonVariant::Ghost)
+                .height(28.0)
+                .background(PAGE)
+                .padding(EdgeInsets::ZERO)
+                .border_radius(4.0),
+        )
+        .on_click(start_here)
+        .into()
 }
 
 fn composer(

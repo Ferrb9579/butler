@@ -2,6 +2,7 @@ mod about_settings;
 mod empty_workspace;
 mod message_jump;
 mod message_search;
+mod project_identity;
 mod project_picker;
 mod provider_settings;
 mod settings_icons;
@@ -198,6 +199,8 @@ fn application_with_transport(
                 let jump_on_open = message_jump.clone();
                 let input_on_open = thread_find_input.clone();
                 let jump_on_new = message_jump.clone();
+                let here_jump = message_jump.clone();
+                let here_draft = selected_thread.clone();
                 let current = selected_thread.get();
                 let jump = message_jump
                     .get()
@@ -299,6 +302,10 @@ fn application_with_transport(
                             jump_on_new.set(None);
                             new_draft.set(None);
                         }
+                    },
+                    move || {
+                        here_jump.set(None);
+                        here_draft.set(None);
                     },
                     move || {
                         settings_navigation.open_providers();
@@ -1353,11 +1360,15 @@ mod ui_tests {
         let mut app = application(Some(state), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut app, move |sim| {
             sim.click("Open thread: Beta memory").unwrap();
+            sim.focus("New thread in Project Beta").unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.focus("Open provider settings").unwrap();
+            assert_eq!(before.list().unwrap()[0].title(), "Project Beta");
+            sim.click("Open thread: Beta memory").unwrap();
             sim.click("New thread").unwrap();
             sim.focus("New thread in...").unwrap();
             sim.type_text("ALPHA").unwrap();
             sim.focus("New thread in Project Alpha").unwrap();
-            assert!(sim.focus("New thread in Project Beta").is_err());
             assert!(sim.focus("New thread in Project Removed").is_err());
             assert_eq!(before.list().unwrap()[0].title(), "Project Beta");
             sim.focus("New thread in...").unwrap();

@@ -106,6 +106,32 @@ pub(crate) fn sidebar(
             "Threads"
         }
     });
+    let project_caption = if let Some(title) = project {
+        let name: Widget = Text::new(title)
+            .style(
+                crate::typography::interface()
+                    .font_size(14.0)
+                    .font_weight(FontWeight::W500)
+                    .color(INK),
+            )
+            .max_lines(Some(1))
+            .overflow(TextOverflow::Ellipsis)
+            .into();
+        Container::new()
+            .height(32.0)
+            .padding(EdgeInsets::symmetric(16.0, 0.0))
+            .child(
+                Row::new(vec![
+                    crate::project_identity::widget(title, 16.0, false),
+                    Expanded::new(name).into(),
+                ])
+                .spacing(10.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center),
+            )
+            .into()
+    } else {
+        label(empty_caption, 12.0, FontWeight::W400, FAINT)
+    };
     let (action, header_add) = match open_project {
         Some(callback) if new_thread.is_some() && project.is_some() => (
             None,
@@ -182,7 +208,7 @@ pub(crate) fn sidebar(
             ),
             search,
             space(24.0),
-            label(empty_caption, 12.0, FontWeight::W400, FAINT),
+            project_caption,
             space(8.0),
             action.unwrap_or_else(|| space(26.0)),
             Expanded::new(SingleChildScrollView::new(
