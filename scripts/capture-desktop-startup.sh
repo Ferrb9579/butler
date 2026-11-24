@@ -131,7 +131,7 @@ capture_one() (
     verify_scratch_draft "$window" "$out/butler-reopened"
     xdotool windowfocus "$window" mousemove --window "$window" 800 424 click 1
     xdotool mousemove 1390 890
-    await_text "$window" "$out/butler-provider-settings.png" 'No providers configured'
+    await_text "$window" "$out/butler-provider-settings.png" 'Display[[:space:]]*name'
   elif [[ "$name" == butler-import ]]; then
     xdotool windowfocus "$window" mousemove --window "$window" 670 462 click 1
     xdotool mousemove 1390 890

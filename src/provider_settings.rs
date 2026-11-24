@@ -7,7 +7,10 @@ use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::profile::{Profile, Provider};
 use incular::{
     prelude::*,
-    widgets::{BackdropFilter, StackFit, internal::ActionSurface},
+    widgets::{
+        BackdropFilter, StackFit,
+        internal::{ActionSurface, ExplicitSemantics},
+    },
 };
 
 // 8-bit sRGB conversions of the light OKLCH tokens in the pinned release CSS.
@@ -20,6 +23,7 @@ const SELECTED: Color = Color::rgba(24, 24, 27, 15); // foreground/6
 const LIST_HOVER: Color = Color::rgba(250, 250, 250, 64); // muted/25
 const ROW_RULE: Color = Color::rgba(228, 228, 231, 128); // border/50
 const INPUT: Color = Color::rgba(212, 212, 216, 255); // zinc-300
+const PRIMARY: Color = Color::rgba(27, 78, 216, 255);
 const SIDEBAR_ICON: Color = Color::rgba(113, 113, 123, 217);
 const SIDEBAR_MUTED: Color = Color::rgba(113, 113, 123, 204);
 
@@ -89,6 +93,7 @@ fn modal_geometry(width: f32, height: f32) -> ModalGeometry {
 pub struct Names {
     profile: Option<Profile>,
     committed: Signal<[String; 3]>,
+    enabled: Signal<[bool; 3]>,
     inputs: [TextEditingController; 3],
     error: Signal<Option<String>>,
 }
@@ -110,11 +115,43 @@ impl Names {
             controller.set_text(committed[index].clone());
             controller
         });
+        let enabled = Provider::ALL.map(|provider| match &profile {
+            Some(profile) => match profile.provider_enabled(provider) {
+                Ok(value) => value,
+                Err(e) => {
+                    error = Some(format!("Could not load provider enablement: {e}"));
+                    false
+                }
+            },
+            None => provider.enabled_by_default(),
+        });
         Self {
             profile,
             committed: Signal::new(committed),
+            enabled: Signal::new(enabled),
             inputs,
             error: Signal::new(error),
+        }
+    }
+
+    fn toggle(&self, index: usize) {
+        let mut enabled = self.enabled.get();
+        let next = !enabled[index];
+        let result = self
+            .profile
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("No local profile."))
+            .and_then(|profile| profile.save_provider_enabled(Provider::ALL[index], next));
+        match result {
+            Ok(()) => {
+                enabled[index] = next;
+                self.enabled.set(enabled);
+                self.error.set(None);
+            }
+            Err(error) => {
+                self.error
+                    .set(Some(format!("Could not change provider settings: {error}")));
+            }
         }
     }
 
@@ -152,6 +189,7 @@ pub fn overlay(
 ) -> Widget {
     let selected = provider_selection.get();
     let saved = names.committed.get();
+    let enabled = names.enabled.get();
     let name_error = names.error.get();
     let device = device.to_owned();
     let modal = LayoutBuilder::new(move |_, constraints| {
@@ -171,6 +209,7 @@ pub fn overlay(
             provider_selection.clone(),
             names.clone(),
             &saved,
+            enabled,
             name_error.as_deref(),
             go_back.clone(),
             #[cfg(test)]
@@ -346,6 +385,7 @@ fn details(
     selection: Signal<usize>,
     names: Names,
     saved: &[String; 3],
+    enabled: [bool; 3],
     name_error: Option<&str>,
     go_back: impl Fn() + 'static,
     #[cfg(test)] fixture_enabled: Signal<bool>,
@@ -386,7 +426,13 @@ fn details(
         .enumerate()
         .map(|(index, name)| {
             let selection = selection.clone();
-            ActionSurface::with_child(
+            let checked = enabled[index];
+            let row_status = if checked {
+                "Not configured"
+            } else {
+                "Disabled"
+            };
+            let inner: Widget = ActionSurface::with_child(
                 Container::new()
                     .padding(EdgeInsets::symmetric(
                         if compact { 12.0 } else { 16.0 },
@@ -396,13 +442,7 @@ fn details(
                     .child(
                         Column::new(vec![
                             styled(name, 14.0, 20.0, FontWeight::W500, INK),
-                            styled(
-                                "Not configured",
-                                12.0,
-                                16.0,
-                                FontWeight::W400,
-                                SIDEBAR_MUTED,
-                            ),
+                            styled(row_status, 12.0, 16.0, FontWeight::W400, SIDEBAR_MUTED),
                         ])
                         .main_axis_size(MainAxisSize::Min)
                         .cross_axis_alignment(CrossAxisAlignment::Start),
@@ -410,20 +450,40 @@ fn details(
             )
             .label(name.as_str())
             .size(Size::new(0.0, 71.0))
-            .color(if selected == index {
-                SELECTED
-            } else {
-                Color::TRANSPARENT
-            })
             .hover_color(if selected == index {
-                SELECTED
+                Color::TRANSPARENT
             } else {
                 LIST_HOVER
             })
             .on_press(move || {
                 selection.set(index);
             })
-            .into()
+            .into();
+            let toggle = names.clone();
+            Container::new()
+                .height(71.0)
+                .padding(EdgeInsets::from_ltrb(
+                    0.0,
+                    0.0,
+                    if compact { 12.0 } else { 16.0 },
+                    0.0,
+                ))
+                .color(if selected == index {
+                    SELECTED
+                } else {
+                    Color::TRANSPARENT
+                })
+                .child(
+                    Row::new(vec![
+                        Widget::from(Expanded::new(inner)),
+                        provider_switch(format!("Enable {name}"), checked, compact, move || {
+                            toggle.toggle(index)
+                        }),
+                    ])
+                    .spacing(12.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center),
+                )
+                .into()
         })
         .collect();
     let mut choices: Vec<Widget> = choice_buttons
@@ -449,18 +509,17 @@ fn details(
             .into(),
     );
     let rename = names.clone();
+    let detail_state = if enabled[selected] {
+        "Not configured"
+    } else {
+        "Disabled"
+    };
     let mut property_rows = vec![
         styled(&saved[selected], 16.0, 24.0, FontWeight::W600, INK),
         space(20.0),
         styled("Status", 14.0, 20.0, FontWeight::W500, INK),
         space(4.0),
-        styled(
-            "No providers configured.",
-            12.0,
-            16.0,
-            FontWeight::W400,
-            MUTED,
-        ),
+        styled(detail_state, 12.0, 16.0, FontWeight::W400, MUTED),
         space(12.0),
         Container::new().height(1.0).color(ROW_RULE).into(),
         space(12.0),
@@ -672,6 +731,57 @@ fn chip(text: &str, compact: bool, device_icon: bool) -> Widget {
 
 fn breadcrumb_label(text: &str, color: Color) -> Widget {
     styled(text, 14.0, 20.0, FontWeight::W500, color)
+}
+
+// T3 components/ui/switch.tsx default size and light theme, using a low-level action.
+fn provider_switch(
+    label: String,
+    checked: bool,
+    compact: bool,
+    click: impl Fn() + 'static,
+) -> Widget {
+    let unit = if compact { 20.0 } else { 16.0 };
+    let size = Size::new(unit * 2.0 - 2.0, unit + 2.0);
+    let thumb = unit - 2.0;
+    let surface = Container::new()
+        .width(size.width)
+        .height(size.height)
+        .padding(EdgeInsets::all(2.0))
+        .alignment(if checked {
+            Alignment::CENTER_RIGHT
+        } else {
+            Alignment::CENTER_LEFT
+        })
+        .decoration(
+            BoxDecoration::new()
+                .color(if checked { PRIMARY } else { INPUT })
+                .border_radius(BorderRadius::all(Radius::circular(size.height / 2.0))),
+        )
+        .child(
+            Container::new().width(thumb).height(thumb).decoration(
+                BoxDecoration::new()
+                    .color(PAGE)
+                    .border_radius(BorderRadius::all(Radius::circular(thumb / 2.0))),
+            ),
+        );
+    Widget::from(
+        ActionSurface::with_child(surface)
+            .label(label.clone())
+            .size(size)
+            .mouse_cursor(incular::widgets::MouseCursor::Click)
+            .on_press(click),
+    )
+    .semantics(
+        ExplicitSemantics::new(SemanticRole::Switch)
+            .label(label)
+            .state(SemanticState {
+                enabled: true,
+                focusable: true,
+                checked: Some(checked.into()),
+                ..SemanticState::default()
+            })
+            .actions([SemanticActionKind::Focus, SemanticActionKind::Activate]),
+    )
 }
 
 fn label(text: &str, size: f32, weight: FontWeight, color: Color) -> Widget {

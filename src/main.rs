@@ -605,6 +605,41 @@ mod ui_tests {
     }
 
     #[test]
+    fn toggles_a_provider_preference_without_changing_selection_or_connecting() {
+        use butler::profile::Provider;
+        let tmp = Fixture::new();
+        let root = tmp.0.join("profile");
+        let profile = Profile::new(&root);
+        profile.complete_onboarding().unwrap();
+        assert!(!profile.provider_enabled(Provider::Cursor).unwrap());
+        assert!(profile.provider_enabled(Provider::Claude).unwrap());
+        let mut app =
+            application(Some(root.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open provider settings").unwrap();
+            sim.click("Enable Claude").unwrap();
+            sim.click("Sign-in for Cursor isn't available in this build.")
+                .unwrap();
+            sim.focus("Enable Cursor").unwrap();
+            sim.press("Space".parse().unwrap()).unwrap();
+            sim.click("Back to workspace").unwrap();
+            sim.click("Enable a provider in Settings to send a message")
+                .unwrap();
+        });
+        assert!(profile.provider_enabled(Provider::Cursor).unwrap());
+        assert!(!profile.provider_enabled(Provider::Claude).unwrap());
+        drop(app);
+        let mut app = application(Some(root), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open provider settings").unwrap();
+            sim.click("Enable Cursor").unwrap();
+        });
+        assert!(!profile.provider_enabled(Provider::Cursor).unwrap());
+    }
+
+    #[test]
     fn opens_provider_settings_then_tests_first_send_offline() {
         let tmp = Fixture::new();
         let profile = tmp.0.join("profile");

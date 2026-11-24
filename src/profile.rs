@@ -55,17 +55,49 @@ impl Profile {
         } else {
             name
         };
+        self.write_provider_setting(provider.filename(), name.as_bytes())?;
+        Ok(name.into())
+    }
+
+    pub fn provider_enabled(&self, provider: Provider) -> io::Result<bool> {
+        let file = match File::open(self.directory.join(provider.enabled_filename())) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Ok(provider.enabled_by_default());
+            }
+            Err(e) => return Err(e),
+        };
+        let mut data = Vec::new();
+        file.take(2).read_to_end(&mut data)?;
+        match data.as_slice() {
+            b"0" => Ok(false),
+            b"1" => Ok(true),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid provider enablement.",
+            )),
+        }
+    }
+
+    pub fn save_provider_enabled(&self, provider: Provider, enabled: bool) -> io::Result<()> {
+        self.write_provider_setting(
+            provider.enabled_filename(),
+            if enabled { b"1" } else { b"0" },
+        )
+    }
+
+    fn write_provider_setting(&self, filename: &str, bytes: &[u8]) -> io::Result<()> {
         fs::create_dir_all(&self.directory)?;
         let (path, mut file) = self.create_pending_file("provider")?;
         let result = (|| {
-            file.write_all(name.as_bytes())?;
+            file.write_all(bytes)?;
             file.sync_all()?;
             drop(file);
-            fs::rename(&path, self.directory.join(provider.filename()))?;
+            fs::rename(&path, self.directory.join(filename))?;
             sync_directory(&self.directory)
         })();
         let _ = fs::remove_file(path);
-        result.map(|()| name.into())
+        result
     }
 
     pub fn onboarding_completed(&self) -> io::Result<bool> {
@@ -133,6 +165,18 @@ pub enum Provider {
 
 impl Provider {
     pub const ALL: [Self; 3] = [Self::Codex, Self::Claude, Self::Cursor];
+
+    pub fn enabled_by_default(self) -> bool {
+        !matches!(self, Self::Cursor)
+    }
+
+    fn enabled_filename(self) -> &'static str {
+        match self {
+            Self::Codex => "provider-enabled-codex",
+            Self::Claude => "provider-enabled-claude",
+            Self::Cursor => "provider-enabled-cursor",
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
