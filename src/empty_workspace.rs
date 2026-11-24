@@ -56,7 +56,7 @@ pub fn view(
     ])
     .main_axis_size(MainAxisSize::Min);
     Row::new(vec![
-        sidebar(None, Some(open_project), Vec::new()),
+        sidebar(None, Some(open_project), None::<fn()>, Vec::new()),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
@@ -76,6 +76,7 @@ pub fn view(
 pub(crate) fn sidebar(
     project: Option<&str>,
     open_project: Option<impl Fn() + 'static>,
+    new_thread: Option<impl Fn() + 'static>,
     threads: Vec<Widget>,
 ) -> Widget {
     let empty_caption = project.unwrap_or(if open_project.is_some() {
@@ -89,12 +90,33 @@ pub(crate) fn sidebar(
     });
     let action = open_project
         .map(|callback| project_button("＋ Add project", 96.0, 26.0, SIDEBAR, MUTED, callback));
+    let search = if let Some(callback) = new_thread {
+        Row::new(vec![
+            Widget::from(Expanded::new(line("⌕   Search", 48.0, MUTED))),
+            Button::with_child(
+                label("✎", 16.0, FontWeight::W500, MUTED).accessibility_label("New thread"),
+            )
+            .style(
+                ButtonStyle::new()
+                    .variant(incular::controls::ButtonVariant::Ghost)
+                    .fixed_size(Size::new(28.0, 28.0))
+                    .background(SIDEBAR),
+            )
+            .on_click(callback)
+            .into(),
+            SizedBox::new().width(12.0).into(),
+        ])
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .into()
+    } else {
+        line("⌕   Search", 48.0, MUTED)
+    };
     Container::new()
         .width(255.0)
         .color(SIDEBAR)
         .child(Column::new(vec![
             line("◧    Butler   ‹   ›", 40.0, INK),
-            line("⌕   Search", 48.0, MUTED),
+            search,
             space(24.0),
             label(empty_caption, 12.0, FontWeight::W400, FAINT),
             space(8.0),

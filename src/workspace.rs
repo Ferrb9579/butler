@@ -15,6 +15,7 @@ pub fn draft(
     selected: Option<FirstTurn>,
     history_error: Option<String>,
     open_thread: impl Fn(uuid::Uuid) + Clone + 'static,
+    new_thread: impl Fn() + 'static,
     open_settings: impl Fn() + Clone + 'static,
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
@@ -50,7 +51,7 @@ pub fn draft(
         .take(72)
         .collect::<String>();
     Row::new(vec![
-        sidebar(project.as_deref(), None::<fn()>, threads),
+        sidebar(project.as_deref(), None::<fn()>, Some(new_thread), threads),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
@@ -171,7 +172,6 @@ fn centered(text: &str, size: f32, weight: FontWeight) -> Widget {
 #[derive(Clone)]
 pub struct OfflineDraft {
     pub input: TextEditingController,
-    pub sent: Option<butler::threads::FirstTurn>,
     pub error: Option<String>,
     pub send: std::rc::Rc<dyn Fn(String)>,
 }
@@ -183,22 +183,14 @@ fn offline_composer(title: &str, draft: OfflineDraft) -> Widget {
         centered(title, 14.0, FontWeight::W500),
         space(20.0),
     ];
-    if let Some(sent) = draft.sent {
-        rows.extend([
-            label(&sent.prompt, 14.0, FontWeight::W500, INK),
-            space(8.0),
-            label(&sent.reply, 14.0, FontWeight::W400, INK),
-        ]);
-    } else {
-        let control = draft.input.clone();
-        rows.extend([
-            EditableText::new(draft.input)
-                .placeholder("Ask anything")
-                .style(TextStyle::new().font_size(14.0).color(INK))
-                .into(),
-            crate::provider_settings::action("Send", move || (draft.send)(control.text())),
-        ]);
-    }
+    let control = draft.input.clone();
+    rows.extend([
+        EditableText::new(draft.input)
+            .placeholder("Ask anything")
+            .style(TextStyle::new().font_size(14.0).color(INK))
+            .into(),
+        crate::provider_settings::action("Send", move || (draft.send)(control.text())),
+    ]);
     if let Some(error) = draft.error {
         rows.push(label(&error, 14.0, FontWeight::W400, MUTED));
     }

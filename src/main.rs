@@ -121,8 +121,17 @@ fn application(
                 let settings_open = settings_open.clone();
                 let title = project.as_ref().map(|project| project.title());
                 let selected = selected_thread.clone();
+                let new_draft = selected_thread.clone();
                 let store = history_store.clone();
                 let show_error = history_error.clone();
+                #[cfg(test)]
+                let saved = selected_thread.clone();
+                #[cfg(test)]
+                let after_send_history = thread_history.clone();
+                #[cfg(test)]
+                let after_send_error = history_error.clone();
+                #[cfg(test)]
+                let after_send_store = history_store.clone();
                 let target = project
                     .as_ref()
                     .map_or(Workspace::Scratch, |p| Workspace::Local(p.root.clone()));
@@ -156,12 +165,30 @@ fn application(
                         }
                     },
                     move || {
+                        new_draft.set(None);
+                    },
+                    move || {
                         settings_open.set(true);
                     },
                     #[cfg(test)]
-                    fixture_enabled
-                        .get()
-                        .then(|| fixture.draft(project.map(|p| p.root))),
+                    fixture_enabled.get().then(|| {
+                        fixture.draft(project.map(|p| p.root), move |turn| {
+                            let refreshed = after_send_store
+                                .as_ref()
+                                .map(|store| store.history(&turn.workspace))
+                                .transpose();
+                            after_send_error.set(
+                                refreshed
+                                    .as_ref()
+                                    .err()
+                                    .map(|e| format!("Could not read threads: {e}")),
+                            );
+                            if let Ok(Some(rows)) = refreshed {
+                                after_send_history.set(rows);
+                            }
+                            saved.set(Some(turn));
+                        })
+                    }),
                 )
             } else {
                 match resolve_landing(&[], true, profile.is_some()) {
@@ -193,6 +220,8 @@ fn application(
             let thread_history = thread_history.clone();
             let history_error = history_error.clone();
             let selected_thread = selected_thread.clone();
+            #[cfg(test)]
+            let fixture_for_project = fixture.clone();
             let desktop = project_picker::overlay(
                 workspace,
                 picker.clone(),
@@ -222,6 +251,8 @@ fn application(
                                     .map(|e| format!("Could not read threads: {e}")),
                             );
                             thread_history.set(refreshed.ok().flatten().unwrap_or_default());
+                            #[cfg(test)]
+                            fixture_for_project.reset();
                             selected_thread.set(None);
                             active_project.set(Some(project));
                             step.set(Picker::Closed);
@@ -297,11 +328,11 @@ mod offline_fixture {
     use std::{io, rc::Rc};
     use uuid::Uuid;
 
+    #[derive(Clone)]
     pub struct Fixture {
         state: Option<PathBuf>,
-        thread: Uuid,
+        thread: Signal<Uuid>,
         input: TextEditingController,
-        sent: Signal<Option<FirstTurn>>,
         error: Signal<Option<String>>,
     }
 
@@ -309,24 +340,31 @@ mod offline_fixture {
         pub fn new(state: Option<PathBuf>) -> Self {
             Self {
                 state,
-                thread: Uuid::new_v4(),
+                thread: Signal::new(Uuid::new_v4()),
                 input: TextEditingController::new(),
-                sent: Signal::new(None),
                 error: Signal::new(None),
             }
         }
 
-        pub fn draft(&self, project: Option<PathBuf>) -> workspace::OfflineDraft {
+        pub fn reset(&self) {
+            self.thread.set(Uuid::new_v4());
+            self.input.clear();
+            self.error.set(None);
+        }
+
+        pub fn draft(
+            &self,
+            project: Option<PathBuf>,
+            on_saved: impl Fn(FirstTurn) + 'static,
+        ) -> workspace::OfflineDraft {
+            let fixture = self.clone();
             let state = self.state.clone();
-            let thread = self.thread;
-            let sent = self.sent.clone();
-            let error = self.error.clone();
+            let thread = self.thread.get();
             workspace::OfflineDraft {
                 input: self.input.clone(),
-                sent: sent.get(),
-                error: error.get(),
+                error: self.error.get(),
                 send: Rc::new(move |prompt| {
-                    if prompt.trim().is_empty() || sent.get().is_some() {
+                    if prompt.trim().is_empty() || fixture.thread.get() != thread {
                         return;
                     }
                     let result = (|| {
@@ -355,11 +393,11 @@ mod offline_fixture {
                     })();
                     match result {
                         Ok(turn) => {
-                            error.set(None);
-                            sent.set(Some(turn));
+                            fixture.reset();
+                            on_saved(turn);
                         }
                         Err(problem) => {
-                            error.set(Some(problem.to_string()));
+                            fixture.error.set(Some(problem.to_string()));
                         }
                     }
                 }),
@@ -498,6 +536,29 @@ mod ui_tests {
             .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
             .collect::<Vec<_>>();
         assert_eq!(records.len(), 1);
+        interact(&mut app, |sim| {
+            sim.click("New thread").unwrap();
+            sim.type_into("Ask anything", "Check another draft")
+                .unwrap();
+            sim.click("Open thread: Check my draft").unwrap();
+            sim.click("Check my draft").unwrap();
+            sim.click("New thread").unwrap();
+        });
+        let store = ThreadStore::new(&profile);
+        assert_eq!(store.history(&Workspace::Scratch).unwrap().len(), 1);
+        assert_eq!(fs::read_dir(profile.join("scratch")).unwrap().count(), 1);
+        interact(&mut app, |sim| {
+            sim.click("Send").unwrap();
+            sim.click("Check another draft").unwrap();
+            sim.click("Open thread: Check my draft").unwrap();
+            sim.click("Check my draft").unwrap();
+            sim.click("Open thread: Check another draft").unwrap();
+            sim.click("Check another draft").unwrap();
+        });
+        let history = store.history(&Workspace::Scratch).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_ne!(history[0].id, history[1].id);
+        assert_eq!(fs::read_dir(profile.join("scratch")).unwrap().count(), 2);
         drop(app);
         let mut reopened =
             application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
@@ -506,6 +567,8 @@ mod ui_tests {
             sim.click("Open thread: Check my draft").unwrap();
             sim.click("Check my draft").unwrap();
             sim.click("Offline test reply received.").unwrap();
+            sim.click("Open thread: Check another draft").unwrap();
+            sim.click("Check another draft").unwrap();
         });
     }
 }
