@@ -24,6 +24,7 @@ impl Message {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Occurrence {
     pub message: Message,
+    pub paragraph: Option<usize>,
     pub range: Range<usize>,
 }
 
@@ -68,11 +69,31 @@ impl Jump {
                     (MessageSource::Assistant, reply),
                 ] {
                     let message = Message { exchange, source };
-                    matches.extend(
-                        crate::thread_find::find_ranges(body, needle)
-                            .into_iter()
-                            .map(|range| Occurrence { message, range }),
-                    );
+                    if source == MessageSource::Assistant
+                        && let Some(paragraphs) = crate::assistant_markdown::project(body)
+                    {
+                        for (paragraph, visible) in paragraphs.iter().enumerate() {
+                            matches.extend(
+                                crate::thread_find::find_ranges(visible, needle)
+                                    .into_iter()
+                                    .map(|range| Occurrence {
+                                        message,
+                                        paragraph: Some(paragraph),
+                                        range,
+                                    }),
+                            );
+                        }
+                    } else {
+                        matches.extend(
+                            crate::thread_find::find_ranges(body, needle)
+                                .into_iter()
+                                .map(|range| Occurrence {
+                                    message,
+                                    paragraph: None,
+                                    range,
+                                }),
+                        );
+                    }
                 }
             }
         }
@@ -214,6 +235,33 @@ mod tests {
             &turn.prompt[changed.occurrence().unwrap().range.clone()],
             "cafe"
         );
+    }
+
+    #[test]
+    fn assistant_find_indexes_projected_soft_spaces_but_never_crosses_paragraphs() {
+        let mut turn = saved();
+        turn.reply = "Lead\nCafé tail.\n\nSecond Café.".into();
+        let find = Jump::new(&turn, "lead café tail".into(), None);
+        assert_eq!(find.count(), "1/1");
+        let hit = find.occurrence().unwrap();
+        assert_eq!(hit.paragraph, Some(0));
+        assert_eq!(hit.range, 0.."Lead Café tail".len());
+        assert_eq!(find.edited(&turn, "tail. Second").count(), "0/0");
+        assert_eq!(find.edited(&turn, "tail.\n\nSecond").count(), "0/0");
+        assert_eq!(
+            find.edited(&turn, "Second Café")
+                .occurrence()
+                .unwrap()
+                .paragraph,
+            Some(1)
+        );
+        turn.reply = "Lead.\n\n`literal` remains.".into();
+        let raw = find.edited(&turn, "`literal`");
+        assert_eq!(raw.count(), "1/1");
+        assert_eq!(raw.occurrence().unwrap().paragraph, None);
+        turn.prompt = "User\nline.".into();
+        assert_eq!(find.edited(&turn, "user line").count(), "0/0");
+        assert_eq!(find.edited(&turn, "user\nline").count(), "1/1");
     }
 
     #[test]

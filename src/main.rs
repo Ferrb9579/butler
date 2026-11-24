@@ -1,4 +1,5 @@
 mod about_settings;
+mod assistant_markdown;
 mod branch_lookup;
 mod composer_drafts;
 mod empty_workspace;
@@ -1671,6 +1672,43 @@ mod ui_tests {
                 assert!(message.y >= find.y + find_size.height);
             }
         }
+    }
+
+    #[test]
+    fn saved_assistant_find_follows_visible_paragraphs_without_modifying_the_reply() {
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        let folder = tmp.0.join("Paragraph project");
+        fs::create_dir(&folder).unwrap();
+        let project = LocalProjects::new(&state).open(&folder).unwrap();
+        Profile::new(&state).complete_onboarding().unwrap();
+        let turn = Conversation {
+            id: uuid::Uuid::new_v4(),
+            workspace: Workspace::Local(project.root),
+            prompt: "Paragraph fixture".into(),
+            reply: "First soft\ncontinuation.\n\nSecond paragraph.".into(),
+            follow_ups: Vec::new(),
+        };
+        let store = ThreadStore::new(&state);
+        store.save(&turn).unwrap();
+        let mut app =
+            application(Some(state), Some(tmp.0.clone()), "Local fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Open thread: Paragraph fixture").unwrap();
+            for (query, count) in [
+                ("soft continuation", "1/1"),
+                ("continuation. Second", "0/0"),
+                ("Second paragraph", "1/1"),
+            ] {
+                sim.click("Thread actions for Paragraph fixture").unwrap();
+                sim.click("Find in thread").unwrap();
+                sim.type_into("Find in thread", query).unwrap();
+                sim.focus(count).unwrap();
+                sim.click("Close thread find").unwrap();
+            }
+        });
+        assert_eq!(store.load(turn.id).unwrap(), Some(turn));
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 0);
     }
 
     #[test]

@@ -61,6 +61,15 @@ controls, and text shaping/rendering comparisons are still unverified.
   `components/chat/TimelineAssistantRows.tsx` is unfilled and inset 4 px
   horizontally and 2 px vertically. Both translated body styles use 14 px
   regular interface text and a 22.75 px line height.
+- `components/ChatMarkdown.tsx` and `index.css:1871–1887` render ordinary
+  paragraphs with 0.65 rem collapsed margins: 10.4 px between paragraphs
+  at 16 px root size, with no extra margin at either end. Butler's bounded
+  CommonMark projection covers ordinary multiline saved assistant prose:
+  soft line breaks become spaces, and Find searches each visible paragraph
+  separately as in `packages/shared/src/threadFindText.ts`. Single-line
+  and unsupported replies, user messages, raw saved text and sidebar
+  search keep their previous path. Bold remains literal (IG-006); links,
+  HTML, code, and unsupported Markdown are not activated or transformed.
 - The native saved-thread fixture has the same two synthetic messages in
   both apps. The pinned reference shows them after dismissal of the stock
   provider-status alert for that session only. Both apps passed second-match

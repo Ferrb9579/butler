@@ -636,6 +636,7 @@ fn transcript(
 
 const USER_MESSAGE_SURFACE: Color = Color::rgba(235, 235, 237, 255);
 const ASSISTANT_MESSAGE_INK: Color = Color::rgba(24, 24, 27, 230);
+const ASSISTANT_PARAGRAPH_GAP: f32 = 10.4;
 
 fn message_style(color: Color) -> TextStyle {
     crate::typography::interface()
@@ -650,9 +651,30 @@ fn assistant_message(body: &str, active: Option<&Jump>) -> Widget {
     // uses the interface font, text-sm / leading-relaxed and 90% foreground
     // at default contrast. No background on the assistant's message.
     let style = message_style(ASSISTANT_MESSAGE_INK);
-    let child = match active {
-        Some(jump) => marked_message(body, style, jump),
-        None => Text::new(body).style(style).soft_wrap(true).into(),
+    let child = match (crate::assistant_markdown::project(body), active) {
+        (Some(paragraphs), jump) => {
+            let occurrence = jump.and_then(Jump::occurrence);
+            Column::new(
+                paragraphs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, text)| {
+                        let range = occurrence
+                            .filter(|hit| hit.paragraph == Some(index))
+                            .map(|hit| &hit.range);
+                        marked_range(&text, style.clone(), range)
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Start)
+            // Ordinary .chat-markdown paragraphs have collapsed 0.65rem
+            // margins between them, with no extra leading/trailing space.
+            .spacing(ASSISTANT_PARAGRAPH_GAP)
+            .into()
+        }
+        (None, Some(jump)) => marked_message(body, style, jump),
+        (None, None) => Text::new(body).style(style).soft_wrap(true).into(),
     };
     let row: Widget = Container::new()
         .padding(EdgeInsets::symmetric(4.0, 2.0))
@@ -697,10 +719,12 @@ fn user_message(body: &str, lane_width: f32, active: Option<&Jump>) -> Widget {
 }
 
 fn marked_message(body: &str, base: TextStyle, jump: &Jump) -> Widget {
-    let Some((range, matched)) = jump
-        .occurrence()
-        .map(|m| &m.range)
-        .and_then(|range| body.get(range.clone()).map(|matched| (range, matched)))
+    marked_range(body, base, jump.occurrence().map(|hit| &hit.range))
+}
+
+fn marked_range(body: &str, base: TextStyle, range: Option<&std::ops::Range<usize>>) -> Widget {
+    let Some((range, matched)) =
+        range.and_then(|range| body.get(range.clone()).map(|matched| (range, matched)))
     else {
         return Text::new(body).style(base).into();
     };
@@ -817,6 +841,70 @@ fn saved_assistant_reply_paints_left_inset_and_relaxed_lines_without_a_bubble() 
     for pair in baselines.windows(2) {
         assert!((pair[1] - pair[0] - 22.75).abs() < 0.4, "{pair:?}");
     }
+}
+
+#[cfg(test)]
+#[test]
+fn saved_assistant_paragraphs_paint_the_reference_gap_and_keep_it_during_find() {
+    use butler::threads::Workspace;
+    use incular::{core::Transform, rendering::PaintCommand, runtime::Runtime};
+
+    let turn = Conversation {
+        id: uuid::Uuid::new_v4(),
+        workspace: Workspace::Scratch,
+        prompt: "question".into(),
+        reply: "Lead\ncontinuation.\n\nSecond paragraph.".into(),
+        follow_ups: Vec::new(),
+    };
+    let measure = |jump: Option<&Jump>| {
+        let row = assistant_message(&turn.reply, jump);
+        let root = Directionality::new(TextDirection::Ltr, Column::new([row]));
+        let mut runtime = Runtime::new(root.into()).unwrap();
+        let (display, _) = runtime
+            .run_frame(Constraints::tight(Size::new(360.0, 280.0)))
+            .unwrap();
+        let mut transforms = vec![Transform::IDENTITY];
+        let mut baselines = Vec::<f32>::new();
+        let mut selected = Vec::<f32>::new();
+        for command in display.commands() {
+            match command {
+                PaintCommand::PushTransform { transform } => {
+                    transforms.push(transforms.last().unwrap().then(*transform));
+                }
+                PaintCommand::PopTransform => {
+                    transforms.pop();
+                }
+                PaintCommand::GlyphRun { run, color } => {
+                    assert_eq!(run.font_size, 14.0);
+                    let at = transforms
+                        .last()
+                        .unwrap()
+                        .transform_point(run.origin + run.glyphs[0].offset);
+                    if !baselines.iter().any(|y| (*y - at.y).abs() < 0.1) {
+                        assert!((at.x - 4.0).abs() < 1.0);
+                        baselines.push(at.y);
+                    }
+                    if *color == Color::rgba(33, 24, 10, 255) {
+                        selected.push(at.y);
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(baselines.len(), 2, "{baselines:?}");
+        assert!(
+            (baselines[1] - baselines[0] - 33.15).abs() < 0.4,
+            "{baselines:?}"
+        );
+        (baselines, selected)
+    };
+    let (before, _) = measure(None);
+    let find = Jump::new(&turn, "Second paragraph".into(), None);
+    let (during, marked) = measure(Some(&find));
+    assert_eq!(before, during);
+    // IG-008 still limits inline background painting. The selected foreground
+    // should only occur on the actual second paragraph, not a raw-source offset.
+    assert_eq!(marked, [during[1]]);
 }
 
 fn find_bar(

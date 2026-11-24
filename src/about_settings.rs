@@ -31,7 +31,7 @@ struct Notice {
     text: &'static str,
 }
 
-const NOTICES: [Notice; 3] = [
+const NOTICES: [Notice; 5] = [
     Notice {
         name: "Inter",
         version: None,
@@ -52,6 +52,20 @@ const NOTICES: [Notice; 3] = [
         license: "MIT",
         bundle: "Desktop",
         text: include_str!("../LICENSES/T3-Code-MIT.txt"),
+    },
+    Notice {
+        name: "Pulldown CMark",
+        version: Some("0.13.6"),
+        license: "MIT",
+        bundle: "Desktop",
+        text: include_str!("../LICENSES/Pulldown-Cmark-MIT.txt"),
+    },
+    Notice {
+        name: "UniCase",
+        version: Some("2.10.0"),
+        license: "MIT",
+        bundle: "Desktop",
+        text: include_str!("../LICENSES/UniCase-MIT.txt"),
     },
 ];
 
@@ -569,12 +583,14 @@ mod tests {
 
     #[test]
     fn filter_uses_all_terms_from_metadata_in_source_order() {
-        assert_eq!(indices(""), [0, 1, 2]);
-        assert_eq!(indices("  \u{feff}  "), [0, 1, 2]);
+        assert_eq!(indices(""), [0, 1, 2, 3, 4]);
+        assert_eq!(indices("  \u{feff}  "), [0, 1, 2, 3, 4]);
         assert_eq!(indices("AsSeTs"), [0, 1]);
-        assert_eq!(indices("  MIT "), [1, 2]);
+        assert_eq!(indices("  MIT "), [1, 2, 3, 4]);
         assert_eq!(indices("ISC\u{feff}feather"), [1]);
         assert_eq!(indices("0.1.11 CODE desktop"), [2]);
+        assert_eq!(indices("cmark MIT"), [3]);
+        assert_eq!(indices("unicase 2.10.0"), [4]);
         assert!(indices("assets 0.1.11").is_empty());
         assert!(indices("permission is hereby granted").is_empty());
     }
