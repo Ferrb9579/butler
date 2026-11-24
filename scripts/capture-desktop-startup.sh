@@ -721,6 +721,14 @@ git_url_key_frame() {
   local input='395x40+389+84' accessory='134x42+791+83' sources='574x380+353+81'
   [[ $("${identify[@]}" -format '%wx%h' "$file") == '1280x800' ]] || return 1
   case "$phase" in
+    before-backspace)
+      # Normal line OCR can misread the disposable trailing X as lowercase.
+      # Retry as a raw line, but require exact case in either read.
+      [[ -n "$query" ]] &&
+        { project_literal "$file" "$input" "${query}X" 7 ||
+          project_literal "$file" "$input" "${query}X" 13; } &&
+        settings_phrase "$file" "$accessory" 'Continue' 7 >/dev/null
+      ;;
     typed)
       [[ -n "$query" ]] && project_literal "$file" "$input" "$query" 7 &&
         settings_phrase "$file" "$accessory" 'Continue' 7 >/dev/null
@@ -765,7 +773,7 @@ capture_butler_git_url_keys() {
   click_project_control "$window" "$prefix-sources.png" "$sources" 'Git URL' 11 || return 1
   click_project_control "$window" "$prefix-empty.png" "$input" 'Enter Git clone URL' 7 || return 1
   xdotool type --clearmodifiers "${query}X" || return 1
-  await_git_url_key_frame "$window" "$prefix-before-backspace.png" typed "${query}X" || return 1
+  await_git_url_key_frame "$window" "$prefix-before-backspace.png" before-backspace "$query" || return 1
   xdotool windowfocus "$window" key --clearmodifiers BackSpace || return 1
   await_git_url_key_frame "$window" "$prefix-edited.png" typed "$query" || return 1
   xdotool windowfocus "$window" key --clearmodifiers ctrl+a BackSpace || return 1
