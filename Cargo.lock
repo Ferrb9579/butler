@@ -555,6 +555,7 @@ dependencies = [
  "incular",
  "serde",
  "serde_json",
+ "url",
  "uuid",
 ]
 

@@ -96,3 +96,12 @@ In Open source licenses, T3's search at `OpenSourceLicenses.tsx:135–229`
 and `thirdPartyLicenses.ts:96–112` maps to an app-owned chip and editor with
 metadata-only AND filtering. Counts, no-results text, Escape and empty blur
 are translated. Raw input autofocus is still logged in `INCULAR-GAPS.md`.
+
+For Git URL, the first Rust-only slice ports a safe subset of
+`packages/client-runtime/src/operations/projects.ts:141–145,222–282`:
+known GitHub/GitLab page normalization, public-host shorthand, repository
+leaf suggestion and lexical destination handling. Butler validates only
+HTTPS inputs without userinfo/query/fragment; it rejects ambiguous path
+components instead of silently normalizing traversal. This pure preparation
+does not contact hosts, decide they are trusted, start Git, or expose an
+unfinished Clone button. Non-HTTPS and broader provider routes remain open.

@@ -3,5 +3,6 @@ pub mod managed_projects;
 pub mod onboarding;
 pub mod profile;
 pub mod projects;
+pub mod remote_projects;
 pub mod scratch;
 pub mod threads;
