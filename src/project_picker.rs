@@ -606,8 +606,10 @@ pub fn overlay(
                     )
                 })
                 .unwrap_or_else(|| "No local profile directory".into());
+            // NewProjectSummary (p-2 pb-0) wraps a 48px two-line row.
+            rows.push(space(8.0));
             rows.push(row(
-                52.0,
+                48.0,
                 source(
                     "palette-folder-git",
                     if name.trim().is_empty() {
@@ -619,6 +621,8 @@ pub fn overlay(
                     true,
                 ),
             ));
+            // CommandPaletteVirtualizedResults applies 8px at both list ends.
+            rows.push(space(8.0));
             let existing = step.clone();
             rows.push(
                 ActionSurface::with_child(row(
@@ -640,6 +644,7 @@ pub fn overlay(
                 })
                 .into(),
             );
+            rows.push(space(8.0));
             if let Some(message) = error {
                 rows.push(row(
                     30.0,
@@ -863,7 +868,9 @@ pub fn overlay(
             }),
         )
     };
-    rows.push(space(if current == Picker::New { 10.0 } else { 16.0 }));
+    if current != Picker::New {
+        rows.push(space(16.0));
+    }
     if current != Picker::RemoteUrl {
         rows.push(Container::new().height(1.0).color(RULE).into());
     }

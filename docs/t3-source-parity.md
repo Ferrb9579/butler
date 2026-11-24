@@ -186,6 +186,13 @@ keyboard focus restoration, and close animation are not implemented here.
   owner-scoped task primitive. The input's trailing Create/Enter control shows
   Creating and rejects duplicates until completion. Cancel and reference-only
   publishing flows are not ported.
+- Normal empty and named New Project use the physical layout from
+  `CommandPaletteAddProject.tsx:127–159` (8px summary top inset plus a 48px
+  two-line row) and `CommandPaletteResults.tsx:151–158,276–292` and
+  `ui/command.tsx:190–205` (8px above and below the 48px Add existing row).
+  The retained separator is y249 and the Add existing row begins at y193
+  at 1280×800. The summary glyph's internal alignment, path text, autofocus,
+  and failed-submit layout remain separate.
 
 In Open source licenses, T3's search at `OpenSourceLicenses.tsx:135–229`
 and `thirdPartyLicenses.ts:96–112` maps to an app-owned chip and editor with

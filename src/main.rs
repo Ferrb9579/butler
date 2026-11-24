@@ -1147,6 +1147,96 @@ mod ui_tests {
         });
     }
 
+    #[test]
+    fn new_project_keeps_reference_summary_list_and_footer_spacing() {
+        use incular::core::Transform;
+        use incular::rendering::{Brush, PaintCommand};
+
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        Profile::new(&state).complete_onboarding().unwrap();
+        let mut app =
+            application(Some(state.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Add project").unwrap();
+            sim.click("New project").unwrap();
+        });
+
+        let window = app.active_window_ids()[0];
+        let observe = |app: &mut Application, title: &'static str| {
+            app.process_runtime_work();
+            let (display, _) = app
+                .run_window_frame_at(
+                    window,
+                    Constraints::tight(Size::new(1280.0, 800.0)),
+                    std::time::Instant::now(),
+                )
+                .unwrap()
+                .unwrap();
+            let mut transforms = vec![Transform::IDENTITY];
+            let mut separators = Vec::new();
+            for command in display.commands() {
+                let rect = match command {
+                    PaintCommand::PushTransform { transform } => {
+                        transforms.push(transforms.last().unwrap().then(*transform));
+                        continue;
+                    }
+                    PaintCommand::PopTransform => {
+                        transforms.pop();
+                        continue;
+                    }
+                    PaintCommand::Rect { rect, color } if *color == empty_workspace::RULE => rect,
+                    PaintCommand::RRect {
+                        rrect,
+                        brush: Brush::Solid(color),
+                    } if *color == empty_workspace::RULE => &rrect.rect,
+                    _ => continue,
+                };
+                if rect.size == Size::new(574.0, 1.0) {
+                    separators.push(transforms.last().unwrap().transform_point(rect.origin));
+                }
+            }
+            assert_eq!(separators, [Offset::new(353.0, 249.0)]);
+
+            let (send, receive) = std::sync::mpsc::channel();
+            app.dispatch(move |runtime| {
+                let semantics = runtime.tree().semantics();
+                let mut ids = semantics.roots().to_vec();
+                let mut summary = None;
+                let mut existing = None;
+                while let Some(id) = ids.pop() {
+                    let Some(node) = semantics.node(id) else {
+                        continue;
+                    };
+                    match node.label.as_deref() {
+                        Some(text) if text == title => summary = Some(node.bounds),
+                        Some("Add existing project") if node.role == SemanticRole::Button => {
+                            existing = Some(node.bounds)
+                        }
+                        _ => {}
+                    }
+                    ids.extend(node.children.iter().copied());
+                }
+                send.send((summary.unwrap(), existing.unwrap())).unwrap();
+            });
+            app.process_runtime_work();
+            let (summary, existing) = receive.try_recv().unwrap();
+            assert!(summary.origin.y >= 137.0 && summary.origin.y < 161.0);
+            assert_eq!(existing.origin, Offset::new(353.0, 193.0));
+            assert_eq!(existing.size, Size::new(574.0, 48.0));
+        };
+        observe(&mut app, "New project");
+        interact(&mut app, |sim| {
+            sim.type_into("Project name", "Case Review").unwrap();
+        });
+        observe(&mut app, "Case Review");
+        interact(&mut app, |sim| {
+            sim.click("Add existing project").unwrap();
+            sim.focus("Local folder").unwrap();
+        });
+        assert!(LocalProjects::new(state).list().unwrap().is_empty());
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn git_url_requires_second_confirmation_and_registers_only_completed_checkout() {
