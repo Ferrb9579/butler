@@ -128,7 +128,7 @@ fn centered(text: &str, size: f32, weight: FontWeight) -> Widget {
 #[derive(Clone)]
 pub struct OfflineDraft {
     pub input: TextEditingController,
-    pub sent: Option<String>,
+    pub sent: Option<butler::threads::FirstTurn>,
     pub error: Option<String>,
     pub send: std::rc::Rc<dyn Fn(String)>,
 }
@@ -142,9 +142,9 @@ fn offline_composer(title: &str, draft: OfflineDraft) -> Widget {
     ];
     if let Some(sent) = draft.sent {
         rows.extend([
-            label(&sent, 14.0, FontWeight::W500, INK),
+            label(&sent.prompt, 14.0, FontWeight::W500, INK),
             space(8.0),
-            label("Offline test reply received.", 14.0, FontWeight::W400, INK),
+            label(&sent.reply, 14.0, FontWeight::W400, INK),
         ]);
     } else {
         let control = draft.input.clone();

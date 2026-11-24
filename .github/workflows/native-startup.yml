@@ -61,7 +61,7 @@ jobs:
           mkdir -p artifacts/ui-native
           printf 'T3 Code v0.1.11 (59651c1761f6c63e9b6056839067066968e6a406)\nButler %s\n' \
             "$GITHUB_SHA" > artifacts/ui-native/provenance.txt
-          xvfb-run -a -s '-screen 0 1440x900x24 -dpi 96 -nolisten tcp' \
+          xvfb-run -a -s '-screen 0 1440x900x24 -dpi 96 -noreset -nolisten tcp' \
             scripts/capture-desktop-startup.sh artifacts/reference/squashfs-root \
             target/debug/butler artifacts/ui-native
       - name: Upload screenshots and logs
