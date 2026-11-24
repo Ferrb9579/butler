@@ -1,7 +1,9 @@
+mod empty_workspace;
 mod welcome;
 mod workspace;
 
 use butler::{
+    landing::{Landing, resolve_landing},
     onboarding::{Route, StartupEvidence},
     profile::Profile,
 };
@@ -32,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let route = Signal::new(initial_route);
     let error = Signal::new(completed.err().map(|error| error.to_string()));
     let agents_open = Signal::new(true);
+    let scratch_open = Signal::new(false);
     let search = TextEditingController::new();
     let prompt = TextEditingController::new();
     let device = machine_label();
@@ -58,8 +61,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             })
-        } else {
+        } else if scratch_open.get() {
             workspace::view(search.clone(), prompt.clone())
+        } else {
+            match resolve_landing(&[], true, profile.is_some()) {
+                Landing::Empty {
+                    can_start_without_project,
+                } => {
+                    let scratch_open = scratch_open.clone();
+                    empty_workspace::view(can_start_without_project, move || {
+                        scratch_open.set(true);
+                    })
+                }
+                _ => unreachable!("no projects are loaded in the current local workspace"),
+            }
         };
         Directionality::new(TextDirection::Ltr, root).into()
     })?;

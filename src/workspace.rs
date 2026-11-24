@@ -7,12 +7,9 @@ const MUTED: Color = Color::rgba(163, 163, 163, 255);
 const SIDEBAR_WIDTH: f32 = 256.0;
 
 pub fn view(search: TextEditingController, prompt: TextEditingController) -> Widget {
-    Row::new(vec![
-        sidebar(search),
-        Expanded::new(thread(prompt)).into(),
-    ])
-    .alignment(CrossAxisAlignment::Stretch)
-    .into()
+    Row::new(vec![sidebar(search), Expanded::new(thread(prompt)).into()])
+        .alignment(CrossAxisAlignment::Stretch)
+        .into()
 }
 
 fn sidebar(search: TextEditingController) -> Widget {

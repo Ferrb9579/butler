@@ -66,7 +66,7 @@ capture_one() (
   if [[ "$name" == t3 || "$name" == butler ]]; then
     await_text "$window" "$out/$name-startup.png" 'Start without an agent' '240x42+270+601'
   else
-    await_text "$window" "$out/$name-startup.png" 'Ask anything' '240x45+410+744'
+    await_text "$window" "$out/$name-startup.png" 'What should we work on' '465x103+535+355'
   fi
   dimensions=$("${identify[@]}" -format '%wx%h' "$out/$name-startup.png")
   if [[ "$dimensions" != "${width}x${height}" ]]; then
@@ -82,7 +82,12 @@ capture_one() (
   if [[ "$name" == t3 && "${CAPTURE_REFERENCE_LANDING:-0}" == 1 ]]; then
     xdotool windowfocus "$window" mousemove --window "$window" 365 620 click 1
     xdotool mousemove 1390 890
-    if ! await_text "$window" "$out/t3-after-welcome.png" 'what should we work on|ask anything'; then
+    if await_text "$window" "$out/t3-after-welcome.png" 'what should we work on' '465x103+535+355'; then
+      # Save a diagnostic reference of the next route, independent of Butler's compositor.
+      xdotool windowfocus "$window" mousemove --window "$window" 828 462 click 1
+      xdotool mousemove 1390 890
+      await_text "$window" "$out/t3-scratch-draft.png" 'ask anything|no project|new thread' || true
+    else
       touch "$out/t3-landing-unverified"
     fi
   elif [[ "$name" == butler && "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
@@ -100,10 +105,10 @@ capture_one() (
       echo "Welcome skip did not persist onboarding completion" >&2
       return 1
     fi
-    await_text "$window" "$out/butler-after-welcome.png" 'Ask anything' '240x45+410+744'
-    verify_draft_input "$window" "$out/butler-after-welcome-typed.png"
+    await_text "$window" "$out/butler-after-welcome.png" 'What should we work on' '465x103+535+355'
+    verify_scratch_draft "$window" "$out/butler-after-welcome"
   elif [[ "$name" == butler-reopened ]]; then
-    verify_draft_input "$window" "$out/butler-reopened-typed.png"
+    verify_scratch_draft "$window" "$out/butler-reopened"
   fi
 )
 
@@ -112,7 +117,11 @@ await_text() {
   local -a image_options ocr_options
   if [[ -n "$crop" ]]; then
     image_options=(-crop "$crop" +repage -resize 350%)
-    ocr_options=(--psm 7)
+    if [[ "$crop" == '465x103+535+355' ]]; then
+      ocr_options=(--psm 6)
+    else
+      ocr_options=(--psm 7)
+    fi
   else
     image_options=(-resize 150%)
     ocr_options=(--psm 11)
@@ -131,25 +140,44 @@ await_text() {
   return 1
 }
 
-verify_draft_input() {
-  local window=$1 file=$2
+verify_scratch_draft() {
+  local window=$1 prefix=$2
+  xdotool windowfocus "$window" mousemove --window "$window" 828 462 click 1
+  xdotool mousemove 1390 890
+  await_text "$window" "$prefix-scratch.png" 'Ask anything' '240x45+410+744'
   xdotool windowfocus "$window" mousemove --window "$window" 516 760 click 1
   xdotool type --clearmodifiers 'Draft check 42'
   xdotool mousemove 1390 890
-  await_text "$window" "$file" 'Draft check 42' '280x45+410+744'
+  await_text "$window" "$prefix-typed.png" 'Draft check 42' '280x45+410+744'
 }
 
+set +e
 capture_one t3 "$t3/AppRun"
+reference_rc=$?
 capture_one butler "$butler"
-rc=0
-"${compare[@]}" -metric AE "$out/t3-startup.png" "$out/butler-startup.png" \
-  "$out/startup-diff.png" 2>"$out/differing-pixels.txt" || rc=$?
-if (( rc > 1 )); then
-  cat "$out/differing-pixels.txt" >&2
-  exit "$rc"
+butler_rc=$?
+set -e
+compare_frames() {
+  local first=$1 second=$2 stem=$3 rc=0
+  "${compare[@]}" -metric AE "$out/$first.png" "$out/$second.png" \
+    "$out/$stem-diff.png" 2>"$out/$stem-differing-pixels.txt" || rc=$?
+  if (( rc > 1 )); then
+    cat "$out/$stem-differing-pixels.txt" >&2
+    return "$rc"
+  fi
+  printf '%s differing pixels: %s\n' "$stem" "$(cat "$out/$stem-differing-pixels.txt")"
+}
+
+if (( reference_rc == 0 && butler_rc == 0 )); then
+  compare_frames t3-startup butler-startup startup
+  if [[ ! -e "$out/t3-landing-unverified" && -f "$out/t3-after-welcome.png" && -f "$out/butler-after-welcome.png" ]]; then
+    compare_frames t3-after-welcome butler-after-welcome empty-workspace
+  fi
 fi
-# Startup defaults are diagnostic, not a parity check on a matched fixture.
-printf 'Native startup differing pixels: %s\n' "$(cat "$out/differing-pixels.txt")"
+if (( reference_rc > 0 || butler_rc > 0 )); then
+  printf 'Native capture failed (reference=%s, Butler=%s)\n' "$reference_rc" "$butler_rc" >&2
+  exit 1
+fi
 if [[ "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
   CAPTURE_PROFILE=butler capture_one butler-reopened "$butler"
   echo "Welcome skip and profile restart smoke test passed"
