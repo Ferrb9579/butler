@@ -216,6 +216,24 @@ pub fn icon(name: &str, size: f32, color: Color) -> Widget {
 
 fn glyph(name: &str) -> Option<&'static Glyph> {
     Some(match name {
+        // Lucide 0.564.0 project palette glyphs; original 24×24 view box.
+        "arrow-left" => {
+            static GLYPH: Glyph = Glyph::new(
+                &[
+                    M(12.0, 19.0),
+                    L(5.0, 12.0),
+                    L(12.0, 5.0),
+                    M(19.0, 12.0),
+                    L(5.0, 12.0),
+                ],
+                &[],
+            );
+            &GLYPH
+        }
+        "chevron-right" => {
+            static GLYPH: Glyph = Glyph::new(&[M(9.0, 18.0), L(15.0, 12.0), L(9.0, 6.0)], &[]);
+            &GLYPH
+        }
         "settings-2" | "General" => {
             static GLYPH: Glyph = Glyph::new(
                 &[

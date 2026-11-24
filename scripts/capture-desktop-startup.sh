@@ -401,7 +401,7 @@ create_native_project() {
   await_project_phrase "$window" "$out/butler-create-project-named.png" \
     '510x40+390+84' "$new_project_title" 7 >/dev/null || return 1
   click_project_control "$window" "$out/butler-create-project-submit.png" \
-    '574x240+353+81' 'Create' 11 || return 1
+    '114x36+807+87' 'Create' 7 || return 1
   await_new_project_workspace "$window" "$out/butler-created-project.png" || return 1
   assert_new_project_files "$profile" || {
     echo 'Created workspace rendered, but its local Git scaffold or project registry did not match' >&2

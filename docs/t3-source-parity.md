@@ -105,3 +105,8 @@ HTTPS inputs without userinfo/query/fragment; it rejects ambiguous path
 components instead of silently normalizing traversal. This pure preparation
 does not contact hosts, decide they are trusted, start Git, or expose an
 unfinished Clone button. Non-HTTPS and broader provider routes remain open.
+
+The project palette reads the pinned `CommandPaletteContent.tsx:94–126`
+footer and `CommandPalette.tsx` key handling for the implemented Enter,
+empty-name Backspace and Escape actions. The focused editor can use these
+shortcuts. Autofocus and arrow-driven result navigation are not ported.

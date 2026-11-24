@@ -1,13 +1,15 @@
 //! Local-project source palette and path field. Visual reference: T3 v0.1.11 desktop.
 
+use crate::settings_icons::icon;
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use incular::{
+    gestures::GestureCallbacks,
     prelude::*,
-    widgets::{BackdropFilter, internal::ActionSurface},
+    widgets::{BackdropFilter, GestureDetector, internal::ActionSurface},
 };
 
 use butler::{managed_projects, projects::FolderListing};
-use std::path::PathBuf;
+use std::{path::PathBuf, rc::Rc};
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, label, space};
 
@@ -44,6 +46,8 @@ pub fn overlay(
     }
     let back = step.clone();
     let close = step.clone();
+    let shortcut_step = step.clone();
+    let shortcut_edit = new_name.clone();
     let header_create: Widget = if current == Picker::New {
         let name = name_preview.get();
         let allow_create = !creating
@@ -89,16 +93,25 @@ pub fn overlay(
     let mut rows = vec![row(
         48.0,
         Row::new(vec![
-            short_action("‹", move || {
-                if creating {
-                    return;
-                }
-                back.set(if matches!(current, Picker::Local | Picker::New) {
-                    Picker::Sources
-                } else {
-                    Picker::Closed
-                });
-            }),
+            Button::with_child("Back", icon("arrow-left", 16.0, MUTED))
+                .style(
+                    ButtonStyle::new()
+                        .variant(ButtonVariant::Ghost)
+                        .fixed_size(Size::new(16.0, 24.0))
+                        .padding(EdgeInsets::ZERO),
+                )
+                .enabled(!creating)
+                .on_click(move || {
+                    if creating {
+                        return;
+                    }
+                    back.set(if matches!(current, Picker::Local | Picker::New) {
+                        Picker::Sources
+                    } else {
+                        Picker::Closed
+                    });
+                })
+                .into(),
             Widget::from(SizedBox::new().width(8.0)),
             if current == Picker::New {
                 let preview = name_preview.clone();
@@ -343,17 +356,62 @@ pub fn overlay(
         }
         Picker::Closed => unreachable!(),
     }
-    rows.extend([
-        space(16.0),
-        Container::new().height(1.0).color(RULE).into(),
+    let footer = if current == Picker::New {
+        let hint = |key, sentence| {
+            Widget::from(
+                Row::new(vec![
+                    shortcut_key(key),
+                    label(sentence, 14.0, FontWeight::W400, MUTED),
+                ])
+                .main_axis_size(MainAxisSize::Min)
+                .spacing(4.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center),
+            )
+        };
+        row(
+            40.0,
+            Row::new(vec![
+                hint("Enter", "Create"),
+                hint("Backspace", "Back"),
+                Button::with_child(
+                    "Close",
+                    Row::new(vec![
+                        shortcut_key("Esc"),
+                        label("Close", 14.0, FontWeight::W400, MUTED),
+                    ])
+                    .main_axis_size(MainAxisSize::Min)
+                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                    .spacing(4.0)
+                    .into(),
+                )
+                .style(
+                    ButtonStyle::new()
+                        .variant(ButtonVariant::Ghost)
+                        .height(30.0)
+                        .padding(EdgeInsets::ZERO),
+                )
+                .enabled(!creating)
+                .on_click(move || {
+                    close.set(Picker::Closed);
+                })
+                .into(),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .spacing(12.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center),
+        )
+    } else {
         row(
             40.0,
             short_action("Close", move || {
-                if !creating {
-                    close.set(Picker::Closed);
-                }
+                close.set(Picker::Closed);
             }),
-        ),
+        )
+    };
+    rows.extend([
+        space(if current == Picker::New { 10.0 } else { 16.0 }),
+        Container::new().height(1.0).color(RULE).into(),
+        footer,
     ]);
 
     let popup = Container::new()
@@ -383,13 +441,39 @@ pub fn overlay(
             Container::new().color(Color::rgba(252, 252, 252, 84)),
         )
         .into(),
-        popup.into(),
+        GestureDetector::new(popup)
+            .callbacks(GestureCallbacks {
+                on_key: Some(Rc::new(move |event| {
+                    if creating
+                        || !event.state.is_down()
+                        || (current == Picker::New
+                            && (shortcut_edit.preedit().is_some()
+                                || shortcut_edit.composing().is_some()))
+                    {
+                        return false;
+                    }
+                    if event.code == Code::Escape {
+                        shortcut_step.set(Picker::Closed);
+                        true
+                    } else if current == Picker::New
+                        && event.code == Code::Backspace
+                        && name_preview.get().is_empty()
+                    {
+                        shortcut_step.set(Picker::Sources);
+                        true
+                    } else {
+                        false
+                    }
+                })),
+                ..GestureCallbacks::default()
+            })
+            .into(),
     ])
     .alignment(Alignment::TOP_CENTER)
     .into()
 }
 
-fn source(icon: &str, title: &str, description: &str, ready: bool) -> Widget {
+fn source(icon_text: &str, title: &str, description: &str, ready: bool) -> Widget {
     let line = |text, size, ink| {
         Widget::from(
             Text::new(text)
@@ -398,8 +482,8 @@ fn source(icon: &str, title: &str, description: &str, ready: bool) -> Widget {
                 .overflow(TextOverflow::Ellipsis),
         )
     };
-    Row::new(vec![
-        label(icon, 16.0, FontWeight::W400, MUTED),
+    let mut items = vec![
+        label(icon_text, 16.0, FontWeight::W400, MUTED),
         SizedBox::new().width(8.0).into(),
         Expanded::new(
             Column::new(vec![
@@ -410,9 +494,27 @@ fn source(icon: &str, title: &str, description: &str, ready: bool) -> Widget {
             .cross_axis_alignment(CrossAxisAlignment::Start),
         )
         .into(),
-    ])
-    .cross_axis_alignment(CrossAxisAlignment::Center)
-    .into()
+    ];
+    if title == "Add existing project" {
+        items.push(icon("chevron-right", 16.0, MUTED));
+    }
+    Row::new(items)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .into()
+}
+
+fn shortcut_key(text: &str) -> Widget {
+    Container::new()
+        .height(20.0)
+        .padding(EdgeInsets::symmetric(4.0, 0.0))
+        .alignment(Alignment::CENTER)
+        .decoration(
+            BoxDecoration::new()
+                .color(Color::rgba(24, 24, 27, 18))
+                .border_radius(BorderRadius::all(Radius::circular(4.0))),
+        )
+        .child(label(text, 12.0, FontWeight::W400, INK))
+        .into()
 }
 
 fn row(height: f32, child: impl Into<Widget>) -> Widget {

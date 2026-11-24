@@ -646,6 +646,29 @@ mod ui_tests {
     }
 
     #[test]
+    fn new_project_keyboard_back_requires_empty_name_and_escape_closes_picker() {
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        Profile::new(&state).complete_onboarding().unwrap();
+        let mut app = application(Some(state), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("＋ Add project").unwrap();
+            sim.click("New project").unwrap();
+            sim.focus("Project name").unwrap();
+            sim.type_text("A").unwrap();
+            sim.press("Backspace".parse().unwrap()).unwrap();
+            sim.focus("Project name").unwrap();
+            sim.press("Backspace".parse().unwrap()).unwrap();
+            sim.focus("New project").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.focus("Project name").unwrap();
+            sim.press("Escape".parse().unwrap()).unwrap();
+            assert!(sim.focus("Project name").is_err());
+            sim.focus("＋ Add project").unwrap();
+        });
+    }
+
+    #[test]
     fn imports_a_folder_through_the_picker_then_reopens_the_project() {
         let tmp = Fixture::new();
         let root = tmp.0.join("Native test folder");
