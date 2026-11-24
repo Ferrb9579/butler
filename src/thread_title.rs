@@ -9,6 +9,14 @@ use incular::{gestures::GestureCallbacks, prelude::*, widgets::MenuController};
 use std::{cell::Cell, rc::Rc};
 use uuid::Uuid;
 
+// Pinned T3 light theme: text-sm (14px/20px), rounded-sm (4px),
+// zinc-900 foreground, zinc-300 input ring, and --ring (primary in sRGB).
+const TITLE_INK: Color = Color::rgba(24, 24, 27, 255);
+const INPUT_RING: Color = Color::rgba(212, 212, 216, 255);
+const HEADER_RING: Color = Color::rgba(27, 78, 216, 255);
+const HEADER_RING_REST: Color = Color::rgba(27, 78, 216, 128);
+const TITLE_RADIUS: f32 = 4.0;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Place {
     Header,
@@ -200,22 +208,36 @@ impl Editor {
     fn input_view(&self, target: Target, commit: impl Fn(Uuid, &str) + 'static) -> Widget {
         let editor = self.clone();
         let guard = Rc::new(commit);
+        let (background, idle_ring, focus_ring, padding) = match target.place {
+            // ChatHeader.tsx: transparent, ring-ring/50, focus:ring-ring, no px.
+            Place::Header => (Color::TRANSPARENT, HEADER_RING_REST, HEADER_RING, 0.0),
+            // SidebarThreadRow.tsx: bg-card, ring-input, focus:ring-foreground, px-1.
+            Place::Sidebar => (WHITE, INPUT_RING, TITLE_INK, 4.0),
+        };
         let input = EditableText::new(self.input.clone())
-            .size(Size::new(0.0, 26.0))
-            .placeholder("Thread title")
-            .content_padding(EdgeInsets::symmetric(4.0, 0.0))
+            .size(Size::new(0.0, 20.0))
+            .content_padding(EdgeInsets::symmetric(padding, 0.0))
             .style(
                 typography::interface()
                     .font_size(14.0)
                     .font_weight(FontWeight::W500)
-                    .color(INK),
+                    .color(TITLE_INK),
             )
-            .focused_border(Border::new(1.0, Color::rgba(66, 102, 206, 255)), 4.0)
+            .cursor_color(TITLE_INK)
+            .focused_border(Border::new(1.0, focus_ring), TITLE_RADIUS)
             .on_editing_complete(|| {});
         let field = Widget::from(input).semantics(
             incular::widgets::internal::ExplicitSemantics::new(SemanticRole::TextField)
                 .label("Thread title"),
         );
+        let field = Container::new()
+            .decoration(
+                BoxDecoration::new()
+                    .color(background)
+                    .border(Border::new(1.0, idle_ring))
+                    .border_radius(BorderRadius::circular(TITLE_RADIUS)),
+            )
+            .child(field);
         let blur_editor = self.clone();
         let blur_commit = guard.clone();
         let field = GestureDetector::new(field).callbacks(GestureCallbacks {
