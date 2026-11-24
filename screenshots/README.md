@@ -212,3 +212,9 @@ identical, both paragraphs are visible, and both Find states passed. The
 before-Find originals remain in the artifact. No provider was used. This
 does not verify unsupported Markdown, match background (IG-008), or pixel
 parity; the sidebar, composer and window chrome still differ.
+
+## Welcome Agents alignment (native)
+
+- [T3 Code](t3/welcome-agents-aligned-light-1280x800.png) · [Butler](butler/welcome-agents-aligned-light-1280x800.png)
+- Unmodified 1280×800 X11 originals from [run 45455679683](https://github.com/Ferrb9579/butler/actions/runs/45455679683) and [artifact 14949818651](https://github.com/Ferrb9579/butler/actions/runs/45455679683/artifacts/14949818651), T3 Code v0.1.11 `59651c1761f6c63e9b6056839067066968e6a406`, Butler `f16e9a0c4a4fede3ba789a168bd7aa86a658a7b5`.
+- The leading Plus, right chevron and 16×6 ACP Registry mark now have matching drawn bounds. The rules above and below Agents align at y218 and y507. This is geometry evidence, not pixel parity: 42,160 of 1,024,000 raw pixels differ, including seven absent provider logos, other controls and window chrome. No agent was enabled.
