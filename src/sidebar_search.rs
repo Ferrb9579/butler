@@ -31,6 +31,7 @@ pub struct Search {
     controller: TextEditingController,
     highlighted: Rc<Cell<Option<Uuid>>>,
     revision: Rc<Cell<u64>>,
+    query_change: Signal<u64>,
     hovered: Rc<Cell<bool>>,
     focused: Rc<Cell<bool>>,
 }
@@ -47,19 +48,34 @@ impl Search {
             controller: TextEditingController::new(),
             highlighted: Rc::new(Cell::new(None)),
             revision: Rc::new(Cell::new(0)),
+            query_change: Signal::new(0),
             hovered: Rc::new(Cell::new(false)),
             focused: Rc::new(Cell::new(false)),
         }
     }
 
     pub fn reset(&self) {
+        let changed = !self.controller.text().is_empty();
         self.controller.clear();
+        if changed {
+            self.notify_query_change();
+        }
         self.highlighted.set(None);
         self.invalidate();
     }
 
     pub fn query(&self) -> String {
         self.controller.text()
+    }
+
+    pub fn observed_query(&self) -> String {
+        self.query_change.get();
+        self.query()
+    }
+
+    fn notify_query_change(&self) {
+        self.query_change
+            .set(self.query_change.get().wrapping_add(1));
     }
 
     /// Raw nonblank input replaces the ordinary list, even if punctuation
@@ -341,6 +357,7 @@ pub fn field(search: Search, result_ids: Vec<Uuid>, on_choose: impl Fn(Uuid) + '
             .on_editing_complete(|| {})
             .on_changed(move |_| {
                 on_change.highlighted.set(None);
+                on_change.notify_query_change();
                 on_change.invalidate();
             }),
     )

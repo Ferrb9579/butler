@@ -1,5 +1,6 @@
 mod about_settings;
 mod empty_workspace;
+mod message_search;
 mod project_picker;
 mod provider_settings;
 mod settings_icons;
@@ -115,6 +116,8 @@ fn application_with_transport(
     let remote_flow = RemoteFlow::new();
     let thread_projects = ThreadProjects::new();
     let sidebar_search = sidebar_search::Search::new();
+    let message_lookup = message_search::Lookup::default();
+    let message_history_revision = Signal::new(0_u64);
     let project_busy = Signal::new(false);
     let queued_project = Rc::new(RefCell::new(None::<ProjectWork>));
     let completed = profile
@@ -203,9 +206,21 @@ fn application_with_transport(
                 let target = project
                     .as_ref()
                     .map_or(Workspace::Scratch, |p| Workspace::Local(p.root.clone()));
+                let history = thread_history.get();
+                let messages = message_lookup.poll(
+                    cx,
+                    history_store.as_ref(),
+                    &target,
+                    &history,
+                    sidebar_search.observed_query(),
+                    message_history_revision.get(),
+                );
+                #[cfg(test)]
+                let message_history_after_send = message_history_revision.clone();
                 workspace::draft(
                     title,
-                    thread_history.get(),
+                    history,
+                    messages,
                     selected_thread.get(),
                     history_error.get(),
                     sidebar_search.clone(),
@@ -273,6 +288,8 @@ fn application_with_transport(
                                 if let Ok(Some(rows)) = refreshed {
                                     after_send_history.set(rows);
                                 }
+                                message_history_after_send
+                                    .set(message_history_after_send.get().wrapping_add(1));
                                 saved.set(Some(turn));
                             },
                         )
@@ -975,6 +992,12 @@ mod ui_tests {
         interact(&mut app, move |sim| {
             sim.focus("Search threads").unwrap();
             sim.type_text("absent").unwrap();
+            for _ in 0..70 {
+                if sim.click("No threads found").is_ok() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
             sim.click("No threads found").unwrap();
             sim.focus("Search threads").unwrap();
             sim.press("Escape".parse().unwrap()).unwrap();
@@ -987,6 +1010,65 @@ mod ui_tests {
             sim.press("Enter".parse().unwrap()).unwrap();
             sim.click(expected).unwrap();
             sim.focus("Open thread: Other").unwrap();
+        });
+    }
+
+    #[test]
+    fn sidebar_search_finds_body_only_in_the_active_workspace() {
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        let project = tmp.0.join("Current");
+        let other = tmp.0.join("Foreign");
+        for path in [&project, &other] {
+            fs::create_dir(path).unwrap();
+        }
+        let project = LocalProjects::new(&state).open(&project).unwrap();
+        Profile::new(&state).complete_onboarding().unwrap();
+        let store = ThreadStore::new(&state);
+        for (root, title, reply) in [
+            (
+                project.root.clone(),
+                "Saved answer",
+                "The graphite ledger shows a balance.",
+            ),
+            (
+                project.root,
+                "Graphite ledger outline",
+                "Graphite ledger notes",
+            ),
+            (
+                other.canonicalize().unwrap(),
+                "Foreign thread",
+                "Graphite ledger is private there.",
+            ),
+        ] {
+            store
+                .save(&Conversation {
+                    id: uuid::Uuid::new_v4(),
+                    workspace: Workspace::Local(root),
+                    prompt: title.into(),
+                    reply: reply.into(),
+                    follow_ups: Vec::new(),
+                })
+                .unwrap();
+        }
+        let mut app = application(Some(state), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.focus("Search threads").unwrap();
+            sim.type_text("graphite ledger").unwrap();
+            sim.focus("Open thread: Graphite ledger outline").unwrap();
+            for _ in 0..70 {
+                if sim.focus("Open thread: Saved answer").is_ok() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            sim.focus("Open thread: Saved answer").unwrap();
+            assert!(sim.focus("Open thread: Foreign thread").is_err());
+            sim.focus("Search threads").unwrap();
+            sim.press("ArrowDown".parse().unwrap()).unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.click("The graphite ledger shows a balance.").unwrap();
         });
     }
 

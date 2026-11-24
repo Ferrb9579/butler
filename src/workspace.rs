@@ -1,6 +1,7 @@
 //! Draft immediately after "Start without a project" on a profile with no provider.
 //! Reference: T3 Code v0.1.11 desktop, native fixture 45329928604.
 
+use crate::message_search::{MessageSource, Results};
 use crate::sidebar_search::{self, Search};
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::threads::{Conversation, ThreadSummary};
@@ -11,6 +12,7 @@ use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, label, sidebar, spac
 pub fn draft(
     project: Option<String>,
     history: Vec<ThreadSummary>,
+    messages: Results,
     selected: Option<Conversation>,
     history_error: Option<String>,
     search: Search,
@@ -21,6 +23,7 @@ pub fn draft(
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
     let title = project.clone().unwrap_or_else(|| "No project".into());
+    let rendered_query = search.query();
     let sidebar = Widget::stateful_builder(search.revision(), move |_| {
         let active = search.active();
         let matching = if active {
@@ -28,15 +31,34 @@ pub fn draft(
         } else {
             history.iter().collect::<Vec<_>>()
         };
-        let ids = matching.iter().map(|thread| thread.id).collect::<Vec<_>>();
+        let lookup = if rendered_query == search.query() {
+            &messages
+        } else {
+            &Results::Idle
+        };
+        let mut rows = matching
+            .into_iter()
+            .map(|row| (row, None))
+            .collect::<Vec<_>>();
+        let mut ids = rows.iter().map(|(thread, _)| thread.id).collect::<Vec<_>>();
+        if active && let Results::Ready(hits) = lookup {
+            for hit in hits {
+                if !ids.contains(&hit.thread_id)
+                    && let Some(row) = history.iter().find(|row| row.id == hit.thread_id)
+                {
+                    ids.push(row.id);
+                    rows.push((row, Some(hit)));
+                }
+            }
+        }
         let highlighted = if active {
             search.highlighted(&ids)
         } else {
             None
         };
-        let mut threads = matching
+        let mut threads = rows
             .into_iter()
-            .map(|thread| {
+            .map(|(thread, hit)| {
                 let id = thread.id;
                 let open_thread = open_thread.clone();
                 let clear = search.clone();
@@ -50,11 +72,36 @@ pub fn draft(
                 } else {
                     label(&thread.title, 13.0, FontWeight::W400, INK)
                 };
+                let content = if let Some(hit) = hit {
+                    let speaker = match hit.source {
+                        MessageSource::User => "You",
+                        MessageSource::Assistant => "Agent",
+                    };
+                    Column::new(vec![
+                        content,
+                        Text::new(format!("{speaker}: {}", hit.snippet))
+                            .style(crate::typography::interface().font_size(12.0).color(MUTED))
+                            .max_lines(Some(1))
+                            .overflow(TextOverflow::Ellipsis)
+                            .into(),
+                    ])
+                    .main_axis_size(MainAxisSize::Min)
+                    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .into()
+                } else {
+                    content
+                };
                 let button = Button::with_child(format!("Open thread: {}", thread.title), content)
                     .style(
                         ButtonStyle::new()
                             .variant(ButtonVariant::Ghost)
-                            .height(if active { 36.0 } else { 32.0 })
+                            .height(if hit.is_some() {
+                                48.0
+                            } else if active {
+                                36.0
+                            } else {
+                                32.0
+                            })
                             .border_radius(6.0)
                             .background(if highlighted == Some(id) {
                                 Color::rgba(236, 236, 239, 255)
@@ -84,7 +131,16 @@ pub fn draft(
                 Container::new()
                     .padding(EdgeInsets::symmetric(8.0, 24.0))
                     .alignment(Alignment::CENTER)
-                    .child(label("No threads found", 12.0, FontWeight::W400, MUTED))
+                    .child(label(
+                        match lookup {
+                            Results::Pending => "Searching thread messages…",
+                            Results::Failed => "Couldn't search thread messages",
+                            _ => "No threads found",
+                        },
+                        12.0,
+                        FontWeight::W400,
+                        MUTED,
+                    ))
                     .into(),
             );
         }

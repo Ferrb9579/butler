@@ -144,3 +144,10 @@ case/accent folding, ranked title matches, stable ID highlight, wrapped
 arrows, Enter to open and Escape/clear to restore the list. Message bodies,
 branch and PR metadata, fuzzy usage ranking, and cross-project search
 remain unported. Search does not invoke a provider.
+
+Sidebar search now adds message-only results after title matches, following
+`Sidebar.tsx:1365–1415`, `Sidebar.logic.ts:1101–1137` and the 120 ms debounce
+in `state/queries.ts:124–154`. It searches up to 50 recent saved threads in
+the current workspace, one file at a time, and shows one actual excerpt per
+thread. Older records, cross-project indexing and opening Find at the
+matched message are still unported.
