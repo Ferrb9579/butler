@@ -5,7 +5,10 @@ use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use incular::{
     gestures::GestureCallbacks,
     prelude::*,
-    widgets::{BackdropFilter, GestureDetector, internal::ActionSurface},
+    widgets::{
+        BackdropFilter, GestureDetector,
+        internal::{ActionSurface, ExplicitSemantics},
+    },
 };
 
 use butler::{
@@ -25,6 +28,9 @@ const FOOTER_RULE: Color = Color::rgba(24, 24, 27, 18);
 const FOOTER_FILL: Color = Color::rgba(24, 24, 27, 6);
 const FOOTER_KEY: Color = Color::rgba(24, 24, 27, 20);
 const FOOTER_INK: Color = Color::rgba(24, 24, 27, 255);
+const NEW_EXISTING: &str = "Add existing project";
+const NEW_EXISTING_DESCRIPTION: &str = "Open a folder or clone a repository";
+const NEW_HIGHLIGHT: Color = Color::rgba(24, 24, 27, 23);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Picker {
@@ -45,6 +51,111 @@ pub enum ProjectRequest {
         remote: RemoteProject,
         destination: String,
     },
+}
+
+#[derive(Clone)]
+pub struct NewProject {
+    editor: TextEditingController,
+    preview: Signal<String>,
+    existing_selected: Signal<bool>,
+}
+
+impl NewProject {
+    pub fn new() -> Self {
+        Self {
+            editor: TextEditingController::new(),
+            preview: Signal::new(String::new()),
+            existing_selected: Signal::new(false),
+        }
+    }
+
+    fn reset(&self) {
+        self.editor.clear();
+        self.preview.set(String::new());
+        self.existing_selected.set(false);
+    }
+
+    fn can_create(data: Option<&Path>, name: &str) -> bool {
+        data.is_some_and(|base| managed_projects::preview_root(base, name).is_ok())
+    }
+
+    fn open_sources(&self, step: &Signal<Picker>) {
+        self.existing_selected.set(false);
+        step.set(Picker::Sources);
+    }
+
+    /// This listener is only on the editable Project name field, not the
+    /// palette ancestor. Unrelated focus and child button activation are left
+    /// to the regular widget route.
+    fn editor_key(
+        &self,
+        event: &KeyboardEvent,
+        step: &Signal<Picker>,
+        creating: bool,
+        project_data: Option<&Path>,
+        submit: &impl Fn(ProjectRequest),
+    ) -> bool {
+        if step.get() != Picker::New
+            || !event.state.is_down()
+            || event.is_composing
+            || self.editor.preedit().is_some()
+            || self.editor.composing().is_some()
+        {
+            return false;
+        }
+        let m = event.modifiers;
+        let plain = !m.ctrl() && !m.meta() && !m.alt() && !m.shift();
+        if plain && matches!(event.code, Code::ArrowUp | Code::ArrowDown) && !creating {
+            if !event.repeat {
+                self.existing_selected.set(true);
+            }
+            return true;
+        }
+        if !matches!(event.code, Code::Enter | Code::NumpadEnter) {
+            return false;
+        }
+        if creating || event.repeat {
+            return true;
+        }
+        let primary = if cfg!(target_os = "macos") {
+            m.meta() && !m.ctrl()
+        } else {
+            m.ctrl() && !m.meta()
+        };
+        let selected = self.existing_selected.get();
+        if selected && plain {
+            self.open_sources(step);
+        } else if primary || (!selected && plain && event.code == Code::NumpadEnter) {
+            let name = self.editor.text();
+            if Self::can_create(project_data, &name) {
+                submit(ProjectRequest::Create(name));
+            }
+        } else if !selected && plain {
+            // An ordinary Enter still uses the existing editor completion.
+            return false;
+        }
+        // In particular, an unsupported modified Enter must not fall into
+        // EditableText's generic Return action and create a project.
+        true
+    }
+}
+
+#[cfg(test)]
+mod new_project_tests {
+    use super::*;
+
+    #[test]
+    fn composing_new_project_keys_do_not_dispatch_picker_actions() {
+        let form = NewProject::new();
+        let step = Signal::new(Picker::New);
+        form.existing_selected.set(true);
+        let no_action = |_| panic!("composition dispatched a project action");
+        let mut enter = KeyboardEvent::key_down(KeyboardKey::Named(NamedKey::Enter), Code::Enter);
+        enter.is_composing = true;
+        assert!(!form.editor_key(&enter, &step, false, None, &no_action));
+        assert_eq!(step.get(), Picker::New);
+        assert!(form.existing_selected.get());
+    }
 }
 
 #[derive(Clone)]
@@ -196,8 +307,7 @@ pub fn overlay(
     workspace: Widget,
     step: Signal<Picker>,
     path: TextEditingController,
-    new_name: TextEditingController,
-    name_preview: Signal<String>,
+    new_project: NewProject,
     remote: RemoteFlow,
     thread_projects: ThreadProjects,
     device: &str,
@@ -217,8 +327,9 @@ pub fn overlay(
     let back = step.clone();
     let close = step.clone();
     let shortcut_step = step.clone();
-    let shortcut_edit = new_name.clone();
+    let shortcut_edit = new_project.clone();
     let shortcut_url = remote.url.clone();
+    let new_existing_selected = current == Picker::New && new_project.existing_selected.get();
     let header_create: Widget = if current == Picker::RemoteUrl {
         let enabled = !remote.url_text.get().trim().is_empty();
         let remote = remote.clone();
@@ -252,16 +363,24 @@ pub fn overlay(
             },
         )
     } else if current == Picker::New {
-        let name = name_preview.get();
+        let label_key = if new_existing_selected {
+            if cfg!(target_os = "macos") {
+                "⌘ Enter"
+            } else {
+                "Ctrl Enter"
+            }
+        } else {
+            "Enter"
+        };
         let allow_create = !creating
-            && project_data
-                .as_ref()
-                .is_some_and(|base| managed_projects::preview_root(base, &name).is_ok());
-        let controller = new_name.clone();
+            && NewProject::can_create(project_data.as_deref(), &new_project.preview.get());
+        let controller = new_project.editor.clone();
+        let create_step = step.clone();
+        let create_data = project_data.clone();
         let submit = submit.clone();
         let text = if creating { "Creating" } else { "Create" };
         Button::with_child(
-            "Create (Enter)",
+            format!("Create ({label_key})"),
             Row::new(vec![
                 label(text, 12.0, FontWeight::W500, INK),
                 Container::new()
@@ -273,7 +392,7 @@ pub fn overlay(
                             .color(Color::rgba(24, 24, 27, 18))
                             .border_radius(BorderRadius::all(Radius::circular(4.0))),
                     )
-                    .child(label("Enter", 10.0, FontWeight::W400, MUTED))
+                    .child(label(label_key, 10.0, FontWeight::W400, MUTED))
                     .into(),
             ])
             .main_axis_size(MainAxisSize::Min)
@@ -288,7 +407,14 @@ pub fn overlay(
                 .padding(EdgeInsets::symmetric(6.0, 0.0)),
         )
         .enabled(allow_create)
-        .on_click(move || submit(ProjectRequest::Create(controller.text())))
+        .on_click(move || {
+            let name = controller.text();
+            if create_step.get() == Picker::New
+                && NewProject::can_create(create_data.as_deref(), &name)
+            {
+                submit(ProjectRequest::Create(name));
+            }
+        })
         .into()
     } else {
         SizedBox::new().width(0.0).into()
@@ -382,22 +508,46 @@ pub fn overlay(
                 )
                 .into()
             } else if current == Picker::New {
-                let preview = name_preview.clone();
-                let submit = submit.clone();
+                let edit = new_project.clone();
+                let completion = new_project.clone();
+                let completion_step = step.clone();
+                let completion_data = project_data.clone();
+                let completion_submit = submit.clone();
+                let keys = new_project.clone();
+                let key_step = step.clone();
+                let key_data = project_data.clone();
+                let key_submit = submit.clone();
                 Expanded::new(
-                    EditableText::new(new_name.clone())
-                        .placeholder("Project name")
-                        .read_only(creating)
-                        .placeholder_color(MUTED)
-                        .style(crate::typography::interface().font_size(15.0).color(INK))
-                        .on_changed(move |value| {
-                            preview.set(value.to_owned());
-                        })
-                        .on_submit(move |value| {
-                            if !creating && !value.trim().is_empty() {
-                                submit(ProjectRequest::Create(value));
-                            }
-                        }),
+                    KeyboardListener::new(
+                        EditableText::new(new_project.editor.clone())
+                            .placeholder("Project name")
+                            .read_only(creating)
+                            .placeholder_color(MUTED)
+                            .style(crate::typography::interface().font_size(15.0).color(INK))
+                            .on_changed(move |value| {
+                                edit.existing_selected.set(false);
+                                edit.preview.set(value.to_owned());
+                            })
+                            .on_submit(move |value| {
+                                if !creating
+                                    && completion_step.get() == Picker::New
+                                    && !completion.existing_selected.get()
+                                    && NewProject::can_create(completion_data.as_deref(), &value)
+                                {
+                                    completion_submit(ProjectRequest::Create(value));
+                                }
+                            }),
+                    )
+                    .include_semantics(false)
+                    .on_key(move |event| {
+                        keys.editor_key(
+                            &event,
+                            &key_step,
+                            creating,
+                            key_data.as_deref(),
+                            &key_submit,
+                        )
+                    }),
                 )
                 .into()
             } else if current == Picker::Local {
@@ -434,16 +584,14 @@ pub fn overlay(
             );
             if project_data.is_some() {
                 let step = step.clone();
-                let name = new_name.clone();
-                let preview = name_preview.clone();
+                let new_project = new_project.clone();
                 rows.push(
                     ActionSurface::with_child(create_source)
                         .label("New project")
                         .size(Size::new(574.0, 48.0))
                         .hover_color(Color::rgba(241, 241, 244, 255))
                         .on_press(move || {
-                            name.clear();
-                            preview.set(String::new());
+                            new_project.reset();
                             step.set(Picker::New);
                         })
                         .into(),
@@ -583,7 +731,7 @@ pub fn overlay(
             }
         }
         Picker::New => {
-            let name = name_preview.get();
+            let name = new_project.preview.get();
             let destination = project_data.as_ref().map(|base| {
                 if name.trim().is_empty() {
                     base.join("projects")
@@ -624,25 +772,59 @@ pub fn overlay(
             // CommandPaletteVirtualizedResults applies 8px at both list ends.
             rows.push(space(8.0));
             let existing = step.clone();
+            let form = new_project.clone();
+            let existing_row = Container::new()
+                .padding(EdgeInsets::symmetric(8.0, 0.0))
+                .child(
+                    Container::new()
+                        .height(48.0)
+                        .padding(EdgeInsets::symmetric(8.0, 0.0))
+                        .alignment(Alignment::CENTER_LEFT)
+                        .decoration(
+                            BoxDecoration::new()
+                                .color(if new_existing_selected {
+                                    NEW_HIGHLIGHT
+                                } else {
+                                    Color::TRANSPARENT
+                                })
+                                .border_radius(BorderRadius::circular(4.0)),
+                        )
+                        .child(source(
+                            "palette-folder-plus",
+                            NEW_EXISTING,
+                            NEW_EXISTING_DESCRIPTION,
+                            true,
+                        )),
+                );
             rows.push(
-                ActionSurface::with_child(row(
-                    48.0,
-                    source(
-                        "palette-folder-plus",
-                        "Add existing project",
-                        "Open a folder or clone a repository",
-                        true,
-                    ),
-                ))
-                .label("Add existing project")
-                .size(Size::new(574.0, 48.0))
-                .hover_color(Color::rgba(241, 241, 244, 255))
-                .on_press(move || {
-                    if !creating {
-                        existing.set(Picker::Sources);
-                    }
-                })
-                .into(),
+                Widget::from(
+                    ActionSurface::with_child(existing_row)
+                        .label(NEW_EXISTING)
+                        .size(Size::new(574.0, 48.0))
+                        .hover_color(Color::rgba(241, 241, 244, 255))
+                        .enabled(!creating)
+                        .on_press(move || {
+                            if !creating && existing.get() == Picker::New {
+                                form.open_sources(&existing);
+                            }
+                        }),
+                )
+                .semantics(
+                    ExplicitSemantics::new(SemanticRole::Button)
+                        .label(NEW_EXISTING)
+                        .description(NEW_EXISTING_DESCRIPTION)
+                        .state(SemanticState {
+                            enabled: !creating,
+                            focusable: !creating,
+                            selected: !creating && new_existing_selected,
+                            ..SemanticState::default()
+                        })
+                        .actions(if creating {
+                            Vec::new()
+                        } else {
+                            vec![SemanticActionKind::Focus, SemanticActionKind::Activate]
+                        }),
+                ),
             );
             rows.push(space(8.0));
             if let Some(message) = error {
@@ -835,7 +1017,23 @@ pub fn overlay(
         row(
             40.0,
             Row::new(vec![
-                hint("Enter", "Create"),
+                Row::new(vec![
+                    shortcut_cap(icon("arrow-up", 12.0, MUTED)),
+                    shortcut_cap(icon("arrow-down", 12.0, MUTED)),
+                    label("Navigate", 14.0, FontWeight::W400, MUTED),
+                ])
+                .main_axis_size(MainAxisSize::Min)
+                .spacing(4.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into(),
+                hint(
+                    "Enter",
+                    if new_existing_selected {
+                        "Select"
+                    } else {
+                        "Create"
+                    },
+                ),
                 hint("Backspace", "Back"),
                 Button::with_child(
                     "Close",
@@ -911,7 +1109,7 @@ pub fn overlay(
             .callbacks(GestureCallbacks {
                 on_key: Some(Rc::new(move |event| {
                     let active_editor = match current {
-                        Picker::New => Some(&shortcut_edit),
+                        Picker::New => Some(&shortcut_edit.editor),
                         Picker::RemoteUrl => Some(&shortcut_url),
                         _ => None,
                     };
@@ -928,7 +1126,7 @@ pub fn overlay(
                         true
                     } else if event.code == Code::Backspace
                         && match current {
-                            Picker::New => name_preview.get().is_empty(),
+                            Picker::New => shortcut_edit.editor.text().is_empty(),
                             Picker::RemoteUrl => shortcut_url.text().is_empty(),
                             _ => false,
                         }
@@ -1082,6 +1280,10 @@ fn palette_submit(
 }
 
 fn shortcut_key(text: &str) -> Widget {
+    shortcut_cap(label(text, 12.0, FontWeight::W400, INK))
+}
+
+fn shortcut_cap(child: Widget) -> Widget {
     Container::new()
         .height(20.0)
         .padding(EdgeInsets::symmetric(4.0, 0.0))
@@ -1091,7 +1293,7 @@ fn shortcut_key(text: &str) -> Widget {
                 .color(Color::rgba(24, 24, 27, 18))
                 .border_radius(BorderRadius::all(Radius::circular(4.0))),
         )
-        .child(label(text, 12.0, FontWeight::W400, INK))
+        .child(child)
         .into()
 }
 

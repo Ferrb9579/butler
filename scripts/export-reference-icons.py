@@ -26,7 +26,7 @@ SEND_PATH = "M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
 
 # Name is the library slug, not the text or tooltip of a particular screen.
 NAMES = set("""
-archive archive-restore arrow-left arrow-right arrow-up bot calendar-clock
+archive archive-restore arrow-down arrow-left arrow-right arrow-up bot calendar-clock
 chart-no-axes-column check chevron-down chevron-right chevron-up circle-alert
 circle-dot cloud corner-left-up external-link eye eye-off file-diff flask-conical folder
 folder-git-2 folder-plus folder-tree git-branch git-pull-request-arrow globe

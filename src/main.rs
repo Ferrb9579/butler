@@ -34,7 +34,7 @@ use butler::{
     threads::{Conversation, ThreadStore, Workspace},
 };
 use incular::prelude::*;
-use project_picker::{Picker, ProjectRequest, RemoteFlow, ThreadProjects};
+use project_picker::{NewProject, Picker, ProjectRequest, RemoteFlow, ThreadProjects};
 use std::{
     cell::{Cell, RefCell},
     env,
@@ -148,8 +148,7 @@ fn application_with_services(
     let browse = Signal::new(None::<FolderListing>);
     let browse_error = Signal::new(None::<String>);
     let path = TextEditingController::new();
-    let new_project_name = TextEditingController::new();
-    let new_project_preview = Signal::new(String::new());
+    let new_project = NewProject::new();
     let remote_flow = RemoteFlow::new();
     let thread_projects = ThreadProjects::new();
     let sidebar_search = sidebar_search::Search::new();
@@ -655,8 +654,7 @@ fn application_with_services(
                 workspace,
                 picker.clone(),
                 path.clone(),
-                new_project_name.clone(),
-                new_project_preview.clone(),
+                new_project.clone(),
                 remote_flow.clone(),
                 thread_projects.clone(),
                 &device,
@@ -1490,6 +1488,86 @@ mod ui_tests {
             assert!(sim.focus("Project name").is_err());
             sim.focus("Add project").unwrap();
         });
+    }
+
+    #[test]
+    fn new_project_arrows_select_existing_without_creating() {
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        Profile::new(&state).complete_onboarding().unwrap();
+        let proposed = butler::managed_projects::preview_root(&state, "Do not create").unwrap();
+        let mut app =
+            application(Some(state.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Add project").unwrap();
+            sim.click("New project").unwrap();
+            sim.type_into("Project name", "Do not create").unwrap();
+            sim.press(Code::ArrowDown).unwrap();
+            sim.focus(if cfg!(target_os = "macos") {
+                "Create (⌘ Enter)"
+            } else {
+                "Create (Ctrl Enter)"
+            })
+            .unwrap();
+            sim.focus("Project name").unwrap();
+            sim.key_down(Code::AltLeft).unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.key_up(Code::AltLeft).unwrap();
+            sim.focus("Project name").unwrap();
+            sim.key_down(Code::Enter).unwrap();
+            sim.key_down(Code::Enter).unwrap();
+            sim.key_up(Code::Enter).unwrap();
+            sim.focus("Local folder").unwrap();
+            assert!(sim.focus("Project name").is_err());
+            sim.click("New project").unwrap();
+            assert!(sim.focus("Create (Ctrl Enter)").is_err());
+            assert!(sim.focus("Create (⌘ Enter)").is_err());
+        });
+        assert!(!proposed.exists());
+        assert!(LocalProjects::new(state).list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn new_project_normal_and_selected_primary_enter_each_create_once() {
+        for (name, selected) in [("Ordinary Name", false), ("Modified Name", true)] {
+            let tmp = Fixture::new();
+            let state = tmp.0.join("profile");
+            Profile::new(&state).complete_onboarding().unwrap();
+            let expected = butler::managed_projects::preview_root(&state, name).unwrap();
+            let mut app =
+                application(Some(state.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+            interact(&mut app, move |sim| {
+                sim.click("Add project").unwrap();
+                sim.click("New project").unwrap();
+                sim.type_into("Project name", name).unwrap();
+                let modifier = if cfg!(target_os = "macos") {
+                    Code::MetaLeft
+                } else {
+                    Code::ControlLeft
+                };
+                if selected {
+                    sim.press(Code::ArrowUp).unwrap();
+                    sim.key_down(modifier).unwrap();
+                }
+                sim.key_down(Code::Enter).unwrap();
+                sim.key_down(Code::Enter).unwrap();
+                sim.key_up(Code::Enter).unwrap();
+                if selected {
+                    sim.key_up(modifier).unwrap();
+                }
+            });
+            for _ in 0..100 {
+                app.process_runtime_work();
+                if LocalProjects::new(&state).list().unwrap().len() == 1 {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            let list = LocalProjects::new(state).list().unwrap();
+            assert_eq!(list.len(), 1, "{list:?}");
+            assert_eq!(list[0].root, expected);
+            assert_eq!(fs::read_dir(expected.parent().unwrap()).unwrap().count(), 1);
+        }
     }
 
     #[test]

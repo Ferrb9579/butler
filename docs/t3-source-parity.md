@@ -274,3 +274,8 @@ in `state/queries.ts:124–154`. It searches up to 50 recent saved threads in
 the current workspace, one file at a time, and shows one actual excerpt per
 thread. Selecting a message result opens the saved thread and seeds Find at
 that message. Older records and cross-project indexing are still unported.
+
+### New Project focused selection
+
+- T3's pinned `CommandPalette.tsx` leaves New Project unhighlighted initially; the path summary is outside the result list. Up/Down can select the real Add existing project row, editing clears it, and Enter chooses the result instead of creating. The header then displays the platform Create modifier; use the same validated local Create path if that chord is pressed.
+- Butler scopes the navigation to the focused raw name editor. The footer uses the pinned Lucide arrow assets and changes Enter Create to Enter Select only when the result is selected. A new dispatch does not intercept composing keys; IG-001 initial autofocus and IG-007 raw IME completion remain open.

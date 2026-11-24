@@ -66,6 +66,20 @@ pub(super) fn glyph(name: &str) -> Option<&'static Glyph> {
             );
             &GLYPH
         }
+        "arrow-down" => {
+            static GLYPH: Glyph = Glyph::new(
+                &[
+                    M(12.000000, 5.000000),
+                    L(12.000000, 19.000000),
+                    M(19.000000, 12.000000),
+                    L(12.000000, 19.000000),
+                    L(5.000000, 12.000000),
+                ],
+                &[
+                ],
+            );
+            &GLYPH
+        }
         "arrow-left" => {
             static GLYPH: Glyph = Glyph::new(
                 &[
