@@ -7,6 +7,7 @@ mod provider_settings;
 mod settings_icons;
 mod sidebar_search;
 mod thread_find;
+mod thread_find_bar;
 mod typography;
 mod ui;
 mod welcome;
@@ -106,6 +107,7 @@ fn application_with_transport(
     let selected_thread = Signal::new(None::<Conversation>);
     let message_jump = Signal::new(None::<message_jump::Jump>);
     let posted_message_jump = Cell::new(None);
+    let thread_find_input = TextEditingController::new();
     let picker_error = Signal::new(
         saved_project
             .err()
@@ -194,6 +196,7 @@ fn application_with_transport(
                 let selected = selected_thread.clone();
                 let new_draft = selected_thread.clone();
                 let jump_on_open = message_jump.clone();
+                let input_on_open = thread_find_input.clone();
                 let jump_on_new = message_jump.clone();
                 let current = selected_thread.get();
                 let jump = message_jump
@@ -230,13 +233,17 @@ fn application_with_transport(
                 );
                 #[cfg(test)]
                 let message_history_after_send = message_history_revision.clone();
-                workspace::draft(
+                let find_settings = settings_open.clone();
+                let find_picker = picker.clone();
+                let shortcut_thread = current.as_ref().map(|turn| turn.id);
+                let workspace = workspace::draft(
                     title,
                     history,
                     messages,
                     current,
                     jump,
                     message_jump.clone(),
+                    thread_find_input.clone(),
                     history_error.get(),
                     sidebar_search.clone(),
                     add_project,
@@ -260,7 +267,15 @@ fn application_with_transport(
                                 let jump = seed.and_then(|(hit, query)| {
                                     message_jump::Jump::from_result(&turn, hit, &query)
                                 });
-                                jump_on_open.set(jump);
+                                if let Some(jump) = jump {
+                                    input_on_open.set_text(jump.query.clone());
+                                    jump_on_open.set(Some(jump));
+                                } else if jump_on_open
+                                    .get()
+                                    .is_some_and(|prior| prior.thread != turn.id)
+                                {
+                                    jump_on_open.set(None);
+                                }
                                 selected.set(Some(turn));
                             }
                             Err(error) => {
@@ -314,7 +329,43 @@ fn application_with_transport(
                             },
                         )
                     }),
-                )
+                );
+                if let Some(thread) = shortcut_thread {
+                    let selected = selected_thread.clone();
+                    let jump_state = message_jump.clone();
+                    let input = thread_find_input.clone();
+                    let modifiers = if cfg!(target_os = "macos") {
+                        Modifiers::META
+                    } else {
+                        Modifiers::CONTROL
+                    };
+                    CallbackShortcuts::new(workspace)
+                        .shortcut(
+                            SingleActivator::new(KeyboardKey::Character("f".into()), modifiers)
+                                .with_repeats(false),
+                            move || {
+                                if find_settings.get()
+                                    || find_picker.get() != Picker::Closed
+                                    || input.preedit().is_some()
+                                    || jump_state.get().is_some_and(|open| open.thread == thread)
+                                {
+                                    return;
+                                }
+                                if let Some(turn) = selected.get().filter(|turn| turn.id == thread)
+                                {
+                                    input.clear();
+                                    jump_state.set(Some(message_jump::Jump::new(
+                                        &turn,
+                                        String::new(),
+                                        None,
+                                    )));
+                                }
+                            },
+                        )
+                        .into()
+                } else {
+                    workspace
+                }
             } else {
                 match resolve_landing(&[], true, profile.is_some()) {
                     Landing::Empty {
@@ -1195,6 +1246,78 @@ mod ui_tests {
         interact(&mut app, |sim| {
             sim.click("Open thread: Unrelated history").unwrap();
             assert!(sim.focus("Close thread find").is_err());
+        });
+    }
+
+    #[test]
+    fn thread_find_edits_counts_steps_and_wraps_from_keyboard_or_buttons() {
+        use butler::threads::Exchange;
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        let folder = tmp.0.join("Project");
+        fs::create_dir(&folder).unwrap();
+        let project = LocalProjects::new(&profile).open(&folder).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let store = ThreadStore::new(&profile);
+        let turn = Conversation {
+            id: uuid::Uuid::new_v4(),
+            workspace: Workspace::Local(project.root),
+            prompt: "Needle first. needle twice.".into(),
+            reply: "Café first.".into(),
+            follow_ups: Vec::new(),
+        };
+        store.save(&turn).unwrap();
+        store
+            .append(
+                &turn,
+                Exchange {
+                    prompt: "Needle last.".into(),
+                    reply: "cafe only".into(),
+                },
+            )
+            .unwrap();
+        let mut app = application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            let modifier = if cfg!(target_os = "macos") {
+                Code::MetaLeft
+            } else {
+                Code::ControlLeft
+            };
+            sim.click("Open thread: Needle first. needle twice.")
+                .unwrap();
+            sim.focus("Open thread: Needle first. needle twice.")
+                .unwrap();
+            assert!(sim.focus("Find in thread").is_err());
+            sim.key_down(modifier).unwrap();
+            sim.press_key(KeyboardKey::Character("f".into()), Code::KeyF)
+                .unwrap();
+            sim.key_up(modifier).unwrap();
+            sim.type_into("Find in thread", " needle ").unwrap();
+            sim.focus("1/3").unwrap();
+            sim.focus("Find in thread").unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.focus("3/3").unwrap();
+            sim.click("Previous match").unwrap();
+            sim.focus("2/3").unwrap();
+            sim.click("Next match").unwrap();
+            sim.click("Next match").unwrap();
+            sim.focus("1/3").unwrap();
+            sim.focus("Find in thread").unwrap();
+            sim.key_down(Code::ShiftLeft).unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.key_up(Code::ShiftLeft).unwrap();
+            sim.focus("3/3").unwrap();
+            sim.focus("Find in thread").unwrap();
+            sim.key_down(modifier).unwrap();
+            sim.press_key(KeyboardKey::Character("a".into()), Code::KeyA)
+                .unwrap();
+            sim.key_up(modifier).unwrap();
+            sim.type_text("absent").unwrap();
+            sim.focus("0/0").unwrap();
+            sim.focus("Find in thread").unwrap();
+            sim.press(Code::Escape).unwrap();
+            assert!(sim.focus("Find in thread").is_err());
         });
     }
 

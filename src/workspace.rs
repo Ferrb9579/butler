@@ -1,13 +1,14 @@
 //! Draft immediately after "Start without a project" on a profile with no provider.
 //! Reference: T3 Code v0.1.11 desktop, native fixture 45329928604.
 
-use crate::message_jump::Jump;
+use crate::message_jump::{Jump, Message};
 use crate::message_search::{MessageHit, MessageSource, Results};
 use crate::settings_icons::icon;
 use crate::sidebar_search::{self, Search};
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::threads::{Conversation, ThreadSummary};
 use incular::prelude::*;
+use std::rc::Rc;
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, icon_label, label, sidebar, space};
 
@@ -18,6 +19,7 @@ pub fn draft(
     selected: Option<Conversation>,
     jump: Option<Jump>,
     jump_state: Signal<Option<Jump>>,
+    find_input: TextEditingController,
     history_error: Option<String>,
     search: Search,
     add_project: Option<impl Fn() + Clone + 'static>,
@@ -27,6 +29,7 @@ pub fn draft(
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
     let title = project.clone().unwrap_or_else(|| "No project".into());
+    let selected = selected.map(Rc::new);
     let rendered_query = search.query();
     let sidebar_settings = open_settings.clone();
     let sidebar = Widget::stateful_builder(search.revision(), move |_| {
@@ -207,17 +210,30 @@ pub fn draft(
                         let margin = if width >= 720.0 { 48.0 } else { 16.0 };
                         let composer_width = (width - 2.0 * margin).clamp(1.0, 652.0);
                         if let Some(turn) = selected.as_ref() {
-                            return Container::new()
+                            let body: Widget = Container::new()
                                 .padding(EdgeInsets::symmetric(margin, 0.0))
                                 .child(Container::new().width(composer_width).child(transcript(
                                     turn,
                                     jump.as_ref(),
-                                    jump_state.clone(),
-                                    composer_width,
                                     #[cfg(test)]
                                     offline.clone(),
                                 )))
                                 .into();
+                            let mut layers = vec![Positioned::fill(body)];
+                            if let Some(jump) = &jump {
+                                layers.push(
+                                    Positioned::new(find_bar(
+                                        turn,
+                                        jump,
+                                        jump_state.clone(),
+                                        find_input.clone(),
+                                        (width - 24.0).clamp(1.0, 280.0),
+                                    ))
+                                    .top(12.0)
+                                    .right(12.0),
+                                );
+                            }
+                            return Stack::new(layers).into();
                         }
                         let top = (height * 0.28).max(28.0);
                         Container::new()
@@ -345,8 +361,6 @@ fn offline_composer(title: &str, draft: OfflineDraft) -> Widget {
 fn transcript(
     turn: &Conversation,
     jump: Option<&Jump>,
-    jump_state: Signal<Option<Jump>>,
-    pane_width: f32,
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
     let mut messages = Vec::new();
@@ -356,9 +370,13 @@ fn transcript(
             .map(|exchange| (&exchange.prompt, &exchange.reply)),
     );
     for (index, (prompt, reply)) in pairs.enumerate() {
-        let row = |body, weight, role| match jump
-            .filter(|jump| jump.exchange == index && jump.source == role)
-        {
+        let row = |body, weight, role| match jump.filter(|jump| {
+            jump.target()
+                == Some(Message {
+                    exchange: index,
+                    source: role,
+                })
+        }) {
             Some(jump) => marked_message(body, weight, jump),
             None => label(body, 14.0, weight, INK),
         };
@@ -396,30 +414,15 @@ fn transcript(
     } else {
         rows
     };
-    let transcript: Widget = Column::new(rows)
+    Column::new(rows)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .into();
-    if let Some(jump) = jump {
-        Stack::new(vec![
-            Positioned::fill(transcript),
-            Positioned::new(jump_bar(
-                jump,
-                jump_state,
-                (pane_width - 24.0).clamp(1.0, 280.0),
-            ))
-            .top(12.0)
-            .right(12.0),
-        ])
         .into()
-    } else {
-        transcript
-    }
 }
 
 fn marked_message(body: &str, weight: FontWeight, jump: &Jump) -> Widget {
     let Some((range, matched)) = jump
-        .range
-        .as_ref()
+        .occurrence()
+        .map(|m| &m.range)
         .and_then(|range| body.get(range.clone()).map(|matched| (range, matched)))
     else {
         return label(body, 14.0, weight, INK).with_key(jump.key);
@@ -442,39 +445,43 @@ fn marked_message(body: &str, weight: FontWeight, jump: &Jump) -> Widget {
     paragraph.with_key(jump.key)
 }
 
-fn jump_bar(jump: &Jump, state: Signal<Option<Jump>>, width: f32) -> Widget {
-    Container::new()
-        .width(width)
-        .height(36.0)
-        .padding(EdgeInsets::symmetric(8.0, 0.0))
-        .decoration(
-            BoxDecoration::new()
-                .color(WHITE)
-                .border(Border::new(1.0, RULE))
-                .border_radius(BorderRadius::circular(8.0)),
-        )
-        .child(
-            Row::new(vec![
-                Widget::from(Expanded::new(
-                    Text::new(&jump.query)
-                        .style(crate::typography::interface().font_size(14.0).color(INK))
-                        .max_lines(Some(1))
-                        .overflow(TextOverflow::Ellipsis),
-                )),
-                Button::with_child("Close thread find", icon("x", 14.0, MUTED))
-                    .style(
-                        ButtonStyle::new()
-                            .variant(ButtonVariant::Ghost)
-                            .fixed_size(Size::new(24.0, 24.0))
-                            .padding(EdgeInsets::ZERO),
-                    )
-                    .on_click(move || {
-                        state.set(None);
-                    })
-                    .into(),
-            ])
-            .main_axis_size(MainAxisSize::Min)
-            .spacing(6.0),
-        )
-        .into()
+fn find_bar(
+    turn: &Rc<Conversation>,
+    jump: &Jump,
+    state: Signal<Option<Jump>>,
+    input: TextEditingController,
+    width: f32,
+) -> Widget {
+    let turn = turn.clone();
+    let thread = turn.id;
+    let on_query = state.clone();
+    let on_step = state.clone();
+    crate::thread_find_bar::view(
+        input,
+        jump.count(),
+        jump.occurrence().is_some(),
+        width,
+        move |text| {
+            if let Some(open) = on_query
+                .get()
+                .filter(|open| open.thread == thread && open.query != text)
+            {
+                on_query.set(Some(open.edited(&turn, text)));
+            }
+        },
+        move |forward| {
+            if let Some(next) = on_step
+                .get()
+                .filter(|open| open.thread == thread)
+                .and_then(|open| open.stepped(forward))
+            {
+                on_step.set(Some(next));
+            }
+        },
+        move || {
+            if state.get().is_some_and(|open| open.thread == thread) {
+                state.set(None);
+            }
+        },
+    )
 }
