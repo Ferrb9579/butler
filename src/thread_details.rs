@@ -387,6 +387,7 @@ pub struct LocalDetails {
     pub popover_open: bool,
     pub inline_open: bool,
     pub clipboard: ClipboardWriter,
+    pub branch: Option<String>,
 }
 
 impl LocalDetails {
@@ -595,20 +596,20 @@ impl LocalDetails {
         } else {
             row
         };
+        let (sections, content_height) = self.card_sections(row);
         let body = Container::new()
             .width(WIDTH)
             .constraints(Constraints::new(0.0, WIDTH, 0.0, max_height))
-            .padding(EdgeInsets::from_ltrb(8.0, 8.0, 8.0, 10.0))
             .decoration(
                 BoxDecoration::new()
                     .color(GLASS)
                     .border(Border::new(1.0, BORDER))
                     .border_radius(BorderRadius::circular(16.0)),
             )
-            .child(if dialog && max_height < 52.0 {
-                Widget::from(SingleChildScrollView::new(row))
+            .child(if dialog && max_height < content_height {
+                Widget::from(SingleChildScrollView::new(sections))
             } else {
-                row
+                sections
             });
         Focus::new(
             Widget::from(ClipRRect::new(16.0, BackdropFilter::blur(12.0, body))).semantics(
@@ -622,6 +623,58 @@ impl LocalDetails {
         )
         .node(self.visibility.details_focus.clone())
         .into()
+    }
+
+    fn card_sections(&self, workspace: Widget) -> (Widget, f32) {
+        let section = |row: Widget| -> Widget {
+            Container::new()
+                .padding(EdgeInsets::from_ltrb(8.0, 8.0, 8.0, 10.0))
+                .child(row)
+                .into()
+        };
+        let workspace = section(workspace);
+        let Some(branch) = &self.branch else {
+            return (workspace, 52.0);
+        };
+        let caption = Text::new(branch)
+            .style(
+                typography::interface()
+                    .font_size(13.0)
+                    .font_weight(FontWeight::W500)
+                    .line_height_absolute(18.0)
+                    .color(Color::rgba(24, 24, 27, 204)),
+            )
+            .max_lines(Some(1))
+            .overflow(TextOverflow::Ellipsis);
+        let branch = Widget::from(
+            Container::new()
+                .height(32.0)
+                .padding(EdgeInsets::symmetric(10.0, 0.0))
+                .alignment(Alignment::CENTER_LEFT)
+                .child(
+                    Row::new([
+                        icon("git-branch", 16.0, MUTED),
+                        Expanded::new(caption).into(),
+                    ])
+                    .spacing(10.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center),
+                ),
+        )
+        .semantics(ExplicitSemantics::new(SemanticRole::Text).label(format!("Branch: {branch}")));
+        (
+            Column::new([
+                workspace,
+                Container::new()
+                    .height(1.0)
+                    .color(Color::rgba(24, 24, 27, 17))
+                    .into(),
+                section(branch),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .into(),
+            103.0,
+        )
     }
 }
 

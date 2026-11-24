@@ -88,11 +88,20 @@ controls, and text shaping/rendering comparisons are still unverified.
   switch, and narrow→wide→narrow. Exact keyboard focus-loss dismissal
   remains unverified. The optional native
   compact fixture passed closed, open, and Escape-dismissed at 1000×800.
-  The editor, scripts, and Git rows are not implemented.
+  The editor, scripts, and other Git rows are not implemented.
 - Right-clicking the workspace row in the wide inline card opens T3's
   `BranchToolbar.tsx` Copy full path action. The application writes the exact
   canonical path only on selection. Compact details omits the nested menu
   because of IG-010.
+- `ThreadDetailsPanel.tsx` gates the branch section on a real non-scratch
+  worktree. `BranchToolbarBranchSelector.tsx` and
+  `threadDetailsPanelStyles.ts` supply the exported GitBranch glyph, the
+  32 px row, 16 px icon, 10 px horizontal padding and gap, and 13 px
+  medium-weight text. Butler displays only an actual named HEAD from the
+  active registered project, including an unborn or linked worktree
+  branch. This is a read-only selection/open snapshot, not the branch
+  selector, detached fallback, external checkout live refresh, or
+  mid-label truncation. No branch or Git action is simulated.
 
 ### Saved-thread composer, without a provider
 

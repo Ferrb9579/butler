@@ -8,3 +8,4 @@ pub mod projects;
 pub mod remote_projects;
 pub mod scratch;
 pub mod threads;
+pub mod workspace_branch;

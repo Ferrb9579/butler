@@ -1,4 +1,5 @@
 mod about_settings;
+mod branch_lookup;
 mod composer_drafts;
 mod empty_workspace;
 mod message_jump;
@@ -75,6 +76,22 @@ fn application_with_transport(
     home: Option<PathBuf>,
     device: String,
     clone_transport: CloneTransport,
+) -> Result<Application, Box<dyn std::error::Error>> {
+    application_with_services(
+        state,
+        home,
+        device,
+        clone_transport,
+        branch_lookup::Lookup::default(),
+    )
+}
+
+fn application_with_services(
+    state: Option<PathBuf>,
+    home: Option<PathBuf>,
+    device: String,
+    clone_transport: CloneTransport,
+    workspace_branch: branch_lookup::Lookup,
 ) -> Result<Application, Box<dyn std::error::Error>> {
     typography::register();
     let settings_open = Signal::new(false);
@@ -244,6 +261,20 @@ fn application_with_transport(
                 );
                 let presentation = details_visibility
                     .present(local_thread.map(|(thread, _)| (thread, details_mode)));
+                let branch = workspace_branch.poll(
+                    cx,
+                    branch_lookup::visible_target(
+                        current.as_ref(),
+                        project.as_ref().map(|project| project.root.as_path()),
+                        presentation.is_some_and(|presentation| match presentation.mode {
+                            thread_details::Mode::Inline => local_thread
+                                .is_some_and(|(thread, _)| details_visibility.is_open(thread)),
+                            thread_details::Mode::Popover => {
+                                details_visibility.popover_open(presentation)
+                            }
+                        }),
+                    ),
+                );
                 let details =
                     local_thread
                         .zip(presentation)
@@ -257,6 +288,7 @@ fn application_with_transport(
                                 popover_open: details_visibility.popover_open(presentation),
                                 visibility: details_visibility.clone(),
                                 clipboard: clipboard_for_rows.clone(),
+                                branch,
                             },
                         );
                 let shortcut_details = details.clone();
@@ -492,6 +524,7 @@ fn application_with_transport(
                 }
             } else {
                 details_visibility.present(None);
+                workspace_branch.poll(cx, None);
                 match resolve_landing(&[], true, profile.is_some()) {
                     Landing::Empty {
                         can_start_without_project,
@@ -2052,6 +2085,92 @@ mod ui_tests {
         interact(&mut app, |sim| sim.focus("1/2").unwrap());
         assert_eq!(fs::read(folder.join("untouched.txt")).unwrap(), b"keep me");
         assert_eq!(fs::read_dir(folder).unwrap().count(), 1);
+        assert_eq!(store.load(thread.id).unwrap(), Some(thread));
+    }
+
+    #[test]
+    fn selected_named_branch_is_read_only_text_in_wide_and_compact_details() {
+        use incular::platform::{PhysicalSize, PlatformEvent, WindowMetrics};
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        let folder = tmp.0.join("Branch Fixture");
+        fs::create_dir(&folder).unwrap();
+        let project = LocalProjects::new(&state).open(&folder).unwrap();
+        Profile::new(&state).complete_onboarding().unwrap();
+        let thread = Conversation {
+            id: uuid::Uuid::new_v4(),
+            workspace: Workspace::Local(project.root),
+            prompt: "Branch details fixture".into(),
+            reply: "Local only".into(),
+            follow_ups: Vec::new(),
+        };
+        let store = ThreadStore::new(&state);
+        store.save(&thread).unwrap();
+        let mut app = application_with_services(
+            Some(state),
+            Some(tmp.0.clone()),
+            "Local fixture".into(),
+            clone_runner::clone_https,
+            // The fixed Git built-ins are separately verified against real
+            // repositories; the test container remaps system binary ownership.
+            branch_lookup::Lookup::with_probe(|root| {
+                (root.file_name().and_then(|name| name.to_str()) == Some("Branch Fixture"))
+                    .then(|| "feature/named".to_owned())
+            }),
+        )
+        .unwrap();
+        let window = app.active_window_ids()[0];
+        let branch_role = |app: &mut Application, width| {
+            app.process_runtime_work();
+            app.run_window_frame_at(
+                window,
+                Constraints::tight(Size::new(width, 800.0)),
+                std::time::Instant::now(),
+            )
+            .unwrap()
+            .unwrap();
+            let (send, receive) = std::sync::mpsc::channel();
+            app.dispatch(move |runtime| {
+                let semantics = runtime.tree().semantics();
+                let mut pending = semantics.roots().to_vec();
+                while let Some(id) = pending.pop() {
+                    let Some(node) = semantics.node(id) else {
+                        continue;
+                    };
+                    if node.label.as_deref() == Some("Branch: feature/named") {
+                        send.send(Some(node.role)).unwrap();
+                        return;
+                    }
+                    pending.extend(node.children.iter().copied());
+                }
+                send.send(None).unwrap();
+            });
+            app.process_runtime_work();
+            receive.try_recv().unwrap()
+        };
+        let wait_for_branch = |app: &mut Application, width| {
+            for _ in 0..500 {
+                if let Some(role) = branch_role(app, width) {
+                    assert_eq!(role, SemanticRole::Text);
+                    return;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            panic!("named branch did not reach its visible details row");
+        };
+        assert_eq!(branch_role(&mut app, 1280.0), None);
+        interact(&mut app, |sim| {
+            sim.click("Open thread: Branch details fixture").unwrap()
+        });
+        wait_for_branch(&mut app, 1280.0);
+        app.handle_window_event(WindowEvent::platform(
+            window,
+            PlatformEvent::Metrics(WindowMetrics::new(PhysicalSize::new(1000, 800), 1.0)),
+        ));
+        assert_eq!(branch_role(&mut app, 1000.0), None);
+        interact(&mut app, |sim| sim.click(thread_details::TOGGLE).unwrap());
+        wait_for_branch(&mut app, 1000.0);
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 0);
         assert_eq!(store.load(thread.id).unwrap(), Some(thread));
     }
 

@@ -66,7 +66,7 @@ pub fn clone_https(input: &str, workspace: &CloneWorkspace) -> io::Result<()> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-mod local {
+pub(crate) mod local {
     use super::*;
     use rustix::{
         fs::{Dir, FileType, Mode, OFlags, fstat, openat},
@@ -166,12 +166,11 @@ mod local {
 
         fn from_system_pair(git: &Path, helpers: &Path) -> Option<Self> {
             // Execute the validated canonical Git image, never a runtime PATH hit.
-            let executable = git.canonicalize().ok()?;
+            let executable = trusted_system_image(git)?;
             let helper_directory = helpers.canonicalize().ok()?;
-            if !trusted_parents(executable.parent()?) || !trusted_parents(&helper_directory) {
+            if !trusted_parents(&helper_directory) {
                 return None;
             }
-            trusted_image(&executable)?;
 
             // Debian uses this single relative alias; do not follow a helper
             // chain through an unverified or user-writable directory.
@@ -234,6 +233,22 @@ mod local {
             ]);
             command
         }
+    }
+
+    fn trusted_system_image(git: &Path) -> Option<PathBuf> {
+        let executable = git.canonicalize().ok()?;
+        if !trusted_parents(executable.parent()?) {
+            return None;
+        }
+        trusted_image(&executable)?;
+        Some(executable)
+    }
+
+    /// The read-only built-ins need the same trusted image, but no transport helpers.
+    pub(crate) fn system_git_for_local_builtins() -> Option<PathBuf> {
+        SYSTEM_GIT
+            .iter()
+            .find_map(|(git, _)| trusted_system_image(Path::new(git)))
     }
 
     fn trusted_parents(path: &Path) -> bool {
@@ -329,27 +344,33 @@ mod local {
     }
 
     fn run(command: &mut Command, directory: &File, timeout: Duration) -> io::Result<ExitStatus> {
-        let directory = directory
-            .try_clone()
-            .map_err(|_| io::Error::other("Could not open the clone staging directory."))?;
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0);
-        // SAFETY: the closure borrows only an owned, CLOEXEC directory FD and
-        // makes the async-signal-safe fchdir(2) call. Its error is a raw errno;
-        // it does not allocate, lock, or resolve a display path before exec.
-        unsafe {
-            command.pre_exec(move || fchdir(&directory).map_err(io::Error::from));
-        }
+            .stderr(Stdio::null());
+        anchor_process(command, directory)?;
         let mut child = command
             .spawn()
             .map_err(|_| io::Error::other("Could not start the trusted Git process."))?;
         wait_bounded(&mut child, timeout)
     }
 
-    fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<ExitStatus> {
+    /// Bind the child to the already validated directory, not a mutable path.
+    pub(crate) fn anchor_process(command: &mut Command, directory: &File) -> io::Result<()> {
+        let directory = directory
+            .try_clone()
+            .map_err(|_| io::Error::other("Could not duplicate the workspace directory."))?;
+        command.process_group(0);
+        // SAFETY: the closure borrows only an owned, CLOEXEC directory FD and
+        // makes the async-signal-safe fchdir(2) call. Its error is a raw errno;
+        // it does not allocate, lock, or resolve a display path before exec.
+        unsafe {
+            command.pre_exec(move || fchdir(&directory).map_err(io::Error::from));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<ExitStatus> {
         let pid = Pid::from_raw(child.id() as i32)
             .ok_or_else(|| io::Error::other("Could not identify the Git process."))?;
         let started = Instant::now();
