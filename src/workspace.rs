@@ -23,6 +23,7 @@ pub fn draft(
     find_input: TextEditingController,
     title_editor: crate::thread_title::Editor,
     details: Option<crate::thread_details::LocalDetails>,
+    saved_input: Option<TextEditingController>,
     rename: impl Fn(uuid::Uuid, &str) + 'static,
     open_find: impl Fn() + 'static,
     history_error: Option<String>,
@@ -42,8 +43,8 @@ pub fn draft(
     let selected = selected.map(Rc::new);
     let rename = Rc::new(rename);
     let header_rename = rename.clone();
-    let active_header = if let Some(turn) = &selected {
-        let saved_title = history
+    let saved_title = selected.as_ref().map(|turn| {
+        history
             .iter()
             .find(|row| row.id == turn.id)
             .map(|row| row.title.clone())
@@ -56,16 +57,19 @@ pub fn draft(
                     .chars()
                     .take(72)
                     .collect()
-            });
-        title_editor.view(
-            turn.id,
-            &saved_title,
-            move |id, title| header_rename(id, title),
-            open_find,
-        )
-    } else {
-        breadcrumb_text("New thread", INK)
-    };
+            })
+    });
+    let active_header =
+        if let Some((turn, saved_title)) = selected.as_ref().zip(saved_title.as_ref()) {
+            title_editor.view(
+                turn.id,
+                saved_title,
+                move |id, title| header_rename(id, title),
+                open_find,
+            )
+        } else {
+            breadcrumb_text("New thread", INK)
+        };
     let details_header = details.clone();
     let find_open = jump.is_some();
     let rendered_query = search.query();
@@ -325,6 +329,20 @@ pub fn draft(
                             );
                             let body = if let Some(detail) = &details {
                                 detail.visibility.content(body)
+                            } else {
+                                body
+                            };
+                            let dock = saved_input.as_ref().zip(saved_title.as_ref());
+                            #[cfg(test)]
+                            let dock = dock.filter(|_| offline.is_none());
+                            let body = if let Some((input, title)) = dock {
+                                Column::new([
+                                    Expanded::new(body).into(),
+                                    crate::saved_composer::view(title, input.clone()),
+                                    space(crate::saved_composer::BOTTOM_INSET),
+                                ])
+                                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                                .into()
                             } else {
                                 body
                             };

@@ -7,6 +7,7 @@ mod project_icon_view;
 mod project_identity;
 mod project_picker;
 mod provider_settings;
+mod saved_composer;
 mod settings_icons;
 mod sidebar_search;
 mod thread_details;
@@ -33,6 +34,7 @@ use incular::prelude::*;
 use project_picker::{Picker, ProjectRequest, RemoteFlow, ThreadProjects};
 use std::{
     cell::{Cell, RefCell},
+    collections::BTreeMap,
     env,
     path::{Path, PathBuf},
     rc::Rc,
@@ -110,6 +112,7 @@ fn application_with_transport(
     );
     let thread_history = Signal::new(initial_history.ok().flatten().unwrap_or_default());
     let selected_thread = Signal::new(None::<Conversation>);
+    let unsent_saved_drafts = Rc::new(RefCell::new(BTreeMap::new()));
     let message_jump = Signal::new(None::<message_jump::Jump>);
     let posted_message_jump = Cell::new(None);
     let thread_find_input = TextEditingController::new();
@@ -218,6 +221,13 @@ fn application_with_transport(
                 let rename_on_new = thread_title_editor.clone();
                 let rename_here = thread_title_editor.clone();
                 let current = selected_thread.get();
+                let saved_input = current.as_ref().map(|turn| {
+                    unsent_saved_drafts
+                        .borrow_mut()
+                        .entry(turn.id)
+                        .or_insert_with(TextEditingController::new)
+                        .clone()
+                });
                 let viewport = cx.viewport();
                 let details = current.as_ref().and_then(|turn| {
                     let Workspace::Local(path) = &turn.workspace else {
@@ -317,6 +327,7 @@ fn application_with_transport(
                     thread_find_input.clone(),
                     thread_title_editor.clone(),
                     details,
+                    saved_input,
                     move |id, title| {
                         let active_scope = rename_project
                             .get()
@@ -1784,6 +1795,74 @@ mod ui_tests {
         );
         assert_eq!(fs::read(with.join("favicon.png")).unwrap(), source);
         assert_eq!(fs::read_dir(without).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn saved_composer_keeps_unsent_text_in_its_own_thread() {
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        let folder = tmp.0.join("Project");
+        fs::create_dir(&folder).unwrap();
+        let project = LocalProjects::new(&profile).open(&folder).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let store = ThreadStore::new(&profile);
+        let make = |title: &str| Conversation {
+            id: uuid::Uuid::new_v4(),
+            workspace: Workspace::Local(project.root.clone()),
+            prompt: title.into(),
+            reply: "A saved reply.".into(),
+            follow_ups: Vec::new(),
+        };
+        let first = make("First thread");
+        let second = make("Second thread");
+        store.save(&first).unwrap();
+        store.save(&second).unwrap();
+        let mut app =
+            application(Some(profile), Some(tmp.0.clone()), "Local fixture".into()).unwrap();
+
+        let read_editor = |app: &mut Application, label: &'static str| {
+            let observed = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let output = observed.clone();
+            app.dispatch(move |runtime| {
+                let semantics = runtime.tree().semantics();
+                let mut pending = semantics.roots().to_vec();
+                while let Some(id) = pending.pop() {
+                    let Some(node) = semantics.node(id) else {
+                        continue;
+                    };
+                    if node.label.as_deref() == Some(label) {
+                        *output.lock().unwrap() = Some(node.value.clone().unwrap_or_default());
+                        return;
+                    }
+                    pending.extend(node.children.iter().copied());
+                }
+            });
+            app.process_runtime_work();
+            observed.lock().unwrap().take().expect("saved editor")
+        };
+        interact(&mut app, |sim| {
+            sim.click("Open thread: First thread").unwrap();
+            sim.type_into("Message First thread", "Unsent first")
+                .unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.type_text("second line").unwrap();
+            sim.click("Open thread: Second thread").unwrap();
+            sim.focus("Message Second thread").unwrap();
+        });
+        assert_eq!(read_editor(&mut app, "Message Second thread"), "");
+        interact(&mut app, |sim| {
+            sim.type_into("Message Second thread", "Separate draft")
+                .unwrap();
+            sim.click("Open thread: First thread").unwrap();
+            sim.focus("Message First thread").unwrap();
+        });
+        assert_eq!(
+            read_editor(&mut app, "Message First thread"),
+            "Unsent first\nsecond line"
+        );
+        assert_eq!(store.load(first.id).unwrap(), Some(first));
+        assert_eq!(store.load(second.id).unwrap(), Some(second));
+        assert_eq!(fs::read_dir(&folder).unwrap().count(), 0);
     }
 
     #[test]

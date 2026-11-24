@@ -81,6 +81,17 @@ controls, and text shaping/rendering comparisons are still unverified.
   Narrow popovers, persistent visibility, copying the path, and the editor,
   scripts, and Git rows are not part of this slice.
 
+### Saved-thread composer, without a provider
+
+- Pinned `ChatView.tsx`, `ComposerSurface.tsx`, and `ChatComposer.tsx`
+  anchor the dock in the conversation lane with a 20 px desktop bottom
+  inset, 16 px corners, a thin outline, and a two-line minimum editor.
+  The initial Rust port keeps an editable multiline draft per saved thread
+  for this session. Enter inserts a newline; Send is explicitly unavailable
+  because no provider is configured. Drafts do not write to the transcript.
+- Attachments, microphone, model selection, draft restart persistence,
+  and live send/feedback are not represented by inactive lookalikes.
+
 ## Implementation boundary
 
 Butler owns its visual components. Do not enable or import Incular's stock
