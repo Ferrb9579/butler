@@ -605,6 +605,38 @@ mod ui_tests {
     }
 
     #[test]
+    fn commits_changed_provider_name_on_focus_loss_without_writing_on_type() {
+        use butler::profile::Provider;
+        let tmp = Fixture::new();
+        let root = tmp.0.join("profile");
+        let profile = Profile::new(&root);
+        profile.complete_onboarding().unwrap();
+        let mut app =
+            application(Some(root.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        let check_before_blur = profile.clone();
+        interact(&mut app, move |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open provider settings").unwrap();
+            sim.focus("Provider display name").unwrap();
+            sim.key_down("ControlLeft".parse().unwrap()).unwrap();
+            sim.press("KeyA".parse().unwrap()).unwrap();
+            sim.key_up("ControlLeft".parse().unwrap()).unwrap();
+            sim.type_text("Alternate Cursor").unwrap();
+            assert_eq!(
+                check_before_blur.provider_name(Provider::Cursor).unwrap(),
+                "Cursor"
+            );
+            sim.click("Select Claude").unwrap();
+            sim.click("Select Alternate Cursor").unwrap();
+        });
+        assert_eq!(
+            profile.provider_name(Provider::Cursor).unwrap(),
+            "Alternate Cursor"
+        );
+        assert_eq!(profile.provider_name(Provider::Claude).unwrap(), "Claude");
+    }
+
+    #[test]
     fn toggles_a_provider_preference_without_changing_selection_or_connecting() {
         use butler::profile::Provider;
         let tmp = Fixture::new();

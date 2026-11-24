@@ -6,12 +6,14 @@ use crate::typography;
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::profile::{Profile, Provider};
 use incular::{
+    gestures::GestureCallbacks,
     prelude::*,
     widgets::{
-        BackdropFilter, StackFit,
+        BackdropFilter, GestureDetector, StackFit,
         internal::{ActionSurface, ExplicitSemantics},
     },
 };
+use std::{cell::RefCell, rc::Rc};
 
 // 8-bit sRGB conversions of the light OKLCH tokens in the pinned release CSS.
 const PAGE: Color = Color::rgba(252, 252, 252, 255); // zinc-25
@@ -95,6 +97,7 @@ pub struct Names {
     committed: Signal<[String; 3]>,
     enabled: Signal<[bool; 3]>,
     inputs: [TextEditingController; 3],
+    names_on_focus: Rc<RefCell<[Option<String>; 3]>>,
     error: Signal<Option<String>>,
 }
 
@@ -130,6 +133,7 @@ impl Names {
             committed: Signal::new(committed),
             enabled: Signal::new(enabled),
             inputs,
+            names_on_focus: Rc::default(),
             error: Signal::new(error),
         }
     }
@@ -155,14 +159,35 @@ impl Names {
         }
     }
 
-    fn save(&self, index: usize) {
+    // Mirrors DraftInput/useCommitOnBlur: a draft is private to the focused
+    // field, and only a changed value is committed at focus loss. A
+    // single-line EditableText already releases focus on non-IME Enter.
+    fn editing_focus(&self, index: usize, focused: bool) {
+        let saved = self.committed.get()[index].clone();
+        if focused {
+            self.names_on_focus.borrow_mut()[index] = Some(saved.clone());
+            if self.inputs[index].text() != saved {
+                self.inputs[index].set_text(saved);
+            }
+            return;
+        }
+        let Some(at_focus) = self.names_on_focus.borrow_mut()[index].take() else {
+            return;
+        };
+        let next = self.inputs[index].text();
+        if next != at_focus && next != saved {
+            self.save(index, &next);
+        } else if next != saved {
+            self.inputs[index].set_text(saved);
+        }
+    }
+
+    fn save(&self, index: usize, next: &str) {
         let result = self
             .profile
             .as_ref()
             .ok_or_else(|| std::io::Error::other("No local profile."))
-            .and_then(|profile| {
-                profile.save_provider_name(Provider::ALL[index], &self.inputs[index].text())
-            });
+            .and_then(|profile| profile.save_provider_name(Provider::ALL[index], next));
         match result {
             Ok(name) => {
                 self.inputs[index].set_text(name.clone());
@@ -417,22 +442,28 @@ fn display_name_row(compact: bool, selected: usize, names: Names) -> Widget {
         let rename = names.clone();
         let mut field = Container::new()
             .height(if compact { 32.0 } else { 28.0 })
-            .padding(EdgeInsets::symmetric(9.0, 0.0))
-            .alignment(Alignment::CENTER_LEFT)
             .decoration(
                 BoxDecoration::new()
                     .border(Border::new(1.0, INPUT))
                     .border_radius(BorderRadius::all(Radius::circular(8.0))),
             )
             .child(
-                EditableText::new(names.inputs[selected].clone())
-                    .placeholder("Provider display name")
-                    .style(
-                        typography::interface()
-                            .font_size(if compact { 16.0 } else { 14.0 })
-                            .color(INK),
-                    )
-                    .on_submit(move |_| rename.save(selected)),
+                GestureDetector::new(
+                    EditableText::new(names.inputs[selected].clone())
+                        .placeholder("Provider display name")
+                        .content_padding(EdgeInsets::symmetric(9.0, 0.0))
+                        .style(
+                            typography::interface()
+                                .font_size(if compact { 16.0 } else { 14.0 })
+                                .color(INK),
+                        ),
+                )
+                .callbacks(GestureCallbacks {
+                    on_focus_within: Some(Rc::new(move |focused| {
+                        rename.editing_focus(selected, focused);
+                    })),
+                    ..GestureCallbacks::default()
+                }),
             );
         let title = styled("Display name", 14.0, 20.0, FontWeight::W500, INK);
         if let Some(width) = width {
