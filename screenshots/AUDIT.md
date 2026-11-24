@@ -12,6 +12,13 @@ diagnostics from [run 45438475842](https://github.com/Ferrb9579/butler/actions/r
 (Butler `5d59956`, same app source as `7780aa5`, pinned T3 Code v0.1.11).
 “Current” refers to an observed current diagnostic, not merely a checked-in icon.
 
+Follow-up: [three refreshed original pairs](README.md#refreshed-welcome-and-new-project-native-audit-follow-up)
+supersede the historical Welcome and New Project pictures below as evidence of
+the current UI. Welcome's leading Plus, right chevron and ACP Registry mark
+are present. The other seven provider logos remain absent. New Project's
+replacement icons are visible; Up/Down navigation, initial focus, footer
+position and the truncated typed path still differ.
+
 | Published pair | Visible differences / disposition |
 | --- | --- |
 | [About](butler/about-fresh-light-1280x800.png) | Sidebar is scrolled differently; captured Butler omits the selected About row. Latest Butler does show selection, but it remains lower than T3. Missing update, track, command, mobile, Welcome and privacy actions; missing install/platform icons go with those missing features. |

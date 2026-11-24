@@ -35,6 +35,33 @@ buttons, shifted spacing, and native window controls mean it is not parity.
 
 [welcome-run]: https://github.com/Ferrb9579/butler/actions/runs/45321949520
 
+## Refreshed Welcome and New Project (native audit follow-up)
+
+| State | T3 Code | Butler | Raw differing pixels |
+| --- | --- | --- | --- |
+| Welcome, agent setup expanded | [PNG](t3/welcome-expanded-refresh-light-1280x800.png) | [PNG](butler/welcome-expanded-refresh-light-1280x800.png) | 52,885 of 1,024,000 |
+| New Project, empty | [PNG](t3/new-project-empty-refresh-light-1280x800.png) | [PNG](butler/new-project-empty-refresh-light-1280x800.png) | 436,288 of 1,024,000 |
+| New Project, typed name | [PNG](t3/new-project-named-refresh-light-1280x800.png) | [PNG](butler/new-project-named-refresh-light-1280x800.png) | 436,202 of 1,024,000 |
+
+Unchanged 1280×800 X11 originals from
+[native run 45446456654](https://github.com/Ferrb9579/butler/actions/runs/45446456654)
+and [artifact 14947110100](https://github.com/Ferrb9579/butler/actions/runs/45446456654/artifacts/14947110100),
+with T3 Code v0.1.11 `59651c1761f6c63e9b6056839067066968e6a406` and Butler
+`a77b8cd309b6420c21abdab3fe84b66a26854d26`. The older pairs are retained above
+and below; raw counts are not pixel-parity verdicts.
+
+- Welcome shows the 10×10 leading Plus, far-right up-chevron at the same x
+  position, and original ACP Registry mark at 16×6 drawn pixels in both apps.
+  Butler's Plus is 2 px right/down and the registry mark is 2 px right and
+  8 px lower. Seven other provider logos, control states and chrome still
+  differ. No agent was enabled.
+- New Project now shows the source Back, folder-create, folder-plus and
+  trailing chevron alongside Enter, Backspace and Escape hints. Up/Down
+  navigation and initial focus still differ; Butler's footer starts 10 px
+  higher. Both use the typed title `Native Created Project`; the local
+  temporary project roots differ, and Butler truncates the expanded path.
+  The reference form was not submitted.
+
 ## Providers after first-run setup (not yet at parity)
 
 - [T3 Code](t3/providers-fresh-light-1280x800.png) · [Butler](butler/providers-fresh-light-1280x800.png)
