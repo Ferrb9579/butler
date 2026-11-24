@@ -405,6 +405,59 @@ fn provider_name_label(name: &str, size: f32, height: f32, weight: FontWeight) -
         .into()
 }
 
+// Setting rows use their own CSS container's content box, not the window
+// width or the breakpoint for splitting the provider list from its editor.
+fn display_name_control_width(content_width: f32) -> Option<f32> {
+    (content_width >= 512.0).then_some(224.0)
+}
+
+fn display_name_row(compact: bool, selected: usize, names: Names) -> Widget {
+    let layout = LayoutBuilder::new(move |_, constraints| {
+        let width = display_name_control_width(constraints.max_width());
+        let rename = names.clone();
+        let mut field = Container::new()
+            .height(if compact { 32.0 } else { 28.0 })
+            .padding(EdgeInsets::symmetric(9.0, 0.0))
+            .alignment(Alignment::CENTER_LEFT)
+            .decoration(
+                BoxDecoration::new()
+                    .border(Border::new(1.0, INPUT))
+                    .border_radius(BorderRadius::all(Radius::circular(8.0))),
+            )
+            .child(
+                EditableText::new(names.inputs[selected].clone())
+                    .placeholder("Provider display name")
+                    .style(
+                        typography::interface()
+                            .font_size(if compact { 16.0 } else { 14.0 })
+                            .color(INK),
+                    )
+                    .on_submit(move |_| rename.save(selected)),
+            );
+        let title = styled("Display name", 14.0, 20.0, FontWeight::W500, INK);
+        if let Some(width) = width {
+            field = field.width(width);
+            Row::new(vec![Widget::from(Expanded::new(title)), field.into()])
+                .spacing(32.0)
+                .cross_axis_alignment(CrossAxisAlignment::Center)
+                .into()
+        } else {
+            Column::new(vec![title, field.into()])
+                .main_axis_size(MainAxisSize::Min)
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .spacing(12.0)
+                .into()
+        }
+    });
+    Container::new()
+        .padding(EdgeInsets::symmetric(
+            if compact { 12.0 } else { 16.0 },
+            12.0,
+        ))
+        .child(layout)
+        .into()
+}
+
 fn details(
     device: &str,
     layout: &ProviderGeometry,
@@ -558,92 +611,99 @@ fn details(
             )
             .into(),
     );
-    let rename = names.clone();
     let detail_state = if enabled[selected] {
         "Not configured"
     } else {
         "Disabled"
     };
-    let mut property_rows = vec![
-        Row::new(vec![
-            provider_mark(Provider::ALL[selected]),
-            Expanded::new(provider_name_label(
-                &saved[selected],
-                16.0,
-                24.0,
-                FontWeight::W600,
-            ))
-            .into(),
-        ])
-        .spacing(8.0)
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .into(),
-        space(20.0),
-        styled("Status", 14.0, 20.0, FontWeight::W500, INK),
-        space(4.0),
-        styled(detail_state, 12.0, 16.0, FontWeight::W400, MUTED),
-        space(12.0),
-        Container::new().height(1.0).color(ROW_RULE).into(),
-        space(12.0),
-        Row::new(vec![
-            styled("Display name", 14.0, 20.0, FontWeight::W500, INK),
-            Spacer::new().into(),
+    let inset = if compact { 12.0 } else { 16.0 };
+    let inset_content = |child: Widget| {
+        Widget::from(
             Container::new()
-                .width(224.0)
+                .padding(EdgeInsets::symmetric(inset, 0.0))
+                .child(child),
+        )
+    };
+    let section_title = |text| {
+        inset_content(
+            Container::new()
                 .height(28.0)
-                .padding(EdgeInsets::symmetric(9.0, 0.0))
                 .alignment(Alignment::CENTER_LEFT)
-                .decoration(
-                    BoxDecoration::new()
-                        .border(Border::new(1.0, INPUT))
-                        .border_radius(BorderRadius::all(Radius::circular(8.0))),
-                )
+                .child(styled(text, 16.0, 24.0, FontWeight::W600, INK))
+                .into(),
+        )
+    };
+    let mut property_rows = vec![
+        inset_content(
+            Container::new()
+                .height(28.0)
                 .child(
-                    EditableText::new(names.inputs[selected].clone())
-                        .placeholder("Provider display name")
-                        .style(typography::interface().font_size(14.0).color(INK))
-                        .on_submit(move |_| rename.save(selected)),
+                    Row::new(vec![
+                        provider_mark(Provider::ALL[selected]),
+                        Expanded::new(provider_name_label(
+                            &saved[selected],
+                            16.0,
+                            24.0,
+                            FontWeight::W600,
+                        ))
+                        .into(),
+                    ])
+                    .spacing(8.0)
+                    .cross_axis_alignment(CrossAxisAlignment::Center),
                 )
                 .into(),
-        ])
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .into(),
+        ),
+        space(10.0),
+        Container::new()
+            .padding(EdgeInsets::symmetric(inset, 12.0))
+            .child(
+                Column::new(vec![
+                    styled("Status", 14.0, 20.0, FontWeight::W500, INK),
+                    space(6.0),
+                    styled(detail_state, 12.0, 16.0, FontWeight::W400, MUTED),
+                ])
+                .main_axis_size(MainAxisSize::Min)
+                .cross_axis_alignment(CrossAxisAlignment::Start),
+            )
+            .into(),
+        Container::new().height(1.0).color(ROW_RULE).into(),
+        display_name_row(compact, selected, names.clone()),
     ];
     if let Some(error) = name_error {
-        property_rows.push(label(error, 13.0, FontWeight::W400, MUTED));
+        property_rows.push(inset_content(label(error, 13.0, FontWeight::W400, MUTED)));
     }
     property_rows.extend([
-        space(34.0),
-        label("Setup", 16.0, FontWeight::W600, INK),
-        space(12.0),
-        label("Account", 14.0, FontWeight::W500, INK),
-        space(8.0),
-        label(
+        space(24.0),
+        section_title("Setup"),
+        space(10.0),
+        inset_content(label("Account", 14.0, FontWeight::W500, INK)),
+        space(4.0),
+        inset_content(label(
             &format!("Sign-in for {title} isn't available in this build."),
             13.0,
             FontWeight::W400,
             MUTED,
-        ),
+        )),
         space(24.0),
-        label("Environment", 16.0, FontWeight::W600, INK),
-        space(18.0),
-        label("Variables", 14.0, FontWeight::W500, INK),
-        space(8.0),
-        label(
+        section_title("Environment"),
+        space(10.0),
+        inset_content(label("Variables", 14.0, FontWeight::W500, INK)),
+        space(4.0),
+        inset_content(label(
             "Per-provider environment variables aren't available in this build.",
             13.0,
             FontWeight::W400,
             MUTED,
-        ),
+        )),
     ]);
     let properties = Column::new(property_rows)
         .main_axis_size(MainAxisSize::Min)
-        .cross_axis_alignment(CrossAxisAlignment::Start);
+        .cross_axis_alignment(CrossAxisAlignment::Stretch);
     let choices = Column::new(choices)
         .main_axis_size(MainAxisSize::Min)
         .cross_axis_alignment(CrossAxisAlignment::Stretch);
     let properties = Container::new()
-        .padding(EdgeInsets::all(16.0))
+        .padding(EdgeInsets::symmetric(0.0, 16.0))
         .child(properties);
     let card: Widget = if let Some(height) = layout.card_height {
         Container::new()
@@ -687,7 +747,6 @@ fn details(
         )
         .child(ClipRRect::new(radius, card))
         .into();
-    let inset = if compact { 12.0 } else { 16.0 };
     let scope_pair = |prefix, value, device_icon| {
         Row::new(vec![
             styled(prefix, 14.0, 20.0, FontWeight::W400, MUTED),
@@ -884,6 +943,14 @@ pub fn action(text: &str, click: impl Fn() + 'static) -> Widget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_display_name_stacks_below_its_own_content_breakpoint() {
+        assert_eq!(display_name_control_width(0.0), None);
+        assert_eq!(display_name_control_width(511.99), None);
+        assert_eq!(display_name_control_width(512.0), Some(224.0));
+        assert_eq!(display_name_control_width(620.0), Some(224.0));
+    }
 
     #[test]
     fn t3_modal_breakpoints_and_caps_at_zero_native_inset() {
