@@ -1,9 +1,7 @@
 //! Native empty workspace, matched against the pinned Linux desktop reference.
 
-use incular::{
-    controls::{Button, ButtonStyle},
-    prelude::*,
-};
+use crate::ui::{Button, ButtonStyle, ButtonVariant};
+use incular::prelude::*;
 
 pub(crate) const PAGE: Color = Color::rgba(252, 252, 252, 255);
 const SIDEBAR: Color = Color::rgba(249, 249, 249, 255);
@@ -93,17 +91,15 @@ pub(crate) fn sidebar(
     let search = if let Some(callback) = new_thread {
         Row::new(vec![
             Widget::from(Expanded::new(line("⌕   Search", 48.0, MUTED))),
-            Button::with_child(
-                label("✎", 16.0, FontWeight::W500, MUTED).accessibility_label("New thread"),
-            )
-            .style(
-                ButtonStyle::new()
-                    .variant(incular::controls::ButtonVariant::Ghost)
-                    .fixed_size(Size::new(28.0, 28.0))
-                    .background(SIDEBAR),
-            )
-            .on_click(callback)
-            .into(),
+            Button::with_child("New thread", label("✎", 16.0, FontWeight::W500, MUTED))
+                .style(
+                    ButtonStyle::new()
+                        .variant(ButtonVariant::Ghost)
+                        .fixed_size(Size::new(28.0, 28.0))
+                        .background(SIDEBAR),
+                )
+                .on_click(callback)
+                .into(),
             SizedBox::new().width(12.0).into(),
         ])
         .cross_axis_alignment(CrossAxisAlignment::Center)
@@ -153,6 +149,11 @@ fn project_button(
     Button::new(text)
         .style(
             style(height, background, ink)
+                .variant(if width == 116.0 {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Ghost
+                })
                 .fixed_size(Size::new(width, height))
                 .text_style(
                     TextStyle::new()

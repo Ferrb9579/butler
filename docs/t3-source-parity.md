@@ -47,3 +47,13 @@ reference default sans stack is `-apple-system, BlinkMacSystemFont, "Inter
 Variable", "Segoe UI", system-ui, sans-serif` (`index.css:168–175` and
 `main.tsx:4`). The current Butler font does not match; exact font embedding
 and platform fallback are separate from token and geometry parity.
+
+## Implementation boundary
+
+Butler owns its visual components. Do not enable or import Incular's stock
+design systems (`incular-controls`, `incular-material`, or equivalents).
+Use the pinned framework's low-level widgets, layout, painting, focus,
+semantics and input as building blocks. App-local buttons in `src/ui.rs`
+use the T3 button source for variants and take explicit per-screen sizes.
+Not all T3 button sizes/animations, icons or dark/focus states are ported.
+Framework parity gaps belong in `INCULAR-GAPS.md`, not in application shims.

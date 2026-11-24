@@ -1780,7 +1780,6 @@ dependencies = [
  "incular-animation",
  "incular-assets",
  "incular-config",
- "incular-controls",
  "incular-core",
  "incular-gestures",
  "incular-image",
@@ -1834,23 +1833,6 @@ dependencies = [
  "icu_provider",
  "incular-core",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "incular-controls"
-version = "0.1.5"
-source = "git+https://github.com/FabortLabs/incular.git?rev=71feef92286dfd6f8accd9c17c14f292da746490#71feef92286dfd6f8accd9c17c14f292da746490"
-dependencies = [
- "bitflags 2.13.2",
- "incular-config",
- "incular-core",
- "incular-rendering",
- "incular-scroll",
- "incular-semantics",
- "incular-text",
- "incular-widgets",
- "smart-default",
- "typed-builder",
 ]
 
 [[package]]

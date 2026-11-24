@@ -1,7 +1,7 @@
 //! Local-project source palette and path field. Visual reference: T3 v0.1.11 desktop.
 
+use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use incular::{
-    controls::{Button, ButtonStyle, ButtonVariant},
     prelude::*,
     widgets::{BackdropFilter, internal::ActionSurface},
 };

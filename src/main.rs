@@ -1,6 +1,7 @@
 mod empty_workspace;
 mod project_picker;
 mod provider_settings;
+mod ui;
 mod welcome;
 mod workspace;
 
@@ -570,7 +571,8 @@ mod ui_tests {
             application(Some(root.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut app, |sim| {
             sim.click("Start without a project").unwrap();
-            sim.click("Open provider settings").unwrap();
+            sim.focus("Open provider settings").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
             sim.focus("Provider display name").unwrap();
             sim.key_down("ControlLeft".parse().unwrap()).unwrap();
             sim.press("KeyA".parse().unwrap()).unwrap();

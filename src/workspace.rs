@@ -1,11 +1,9 @@
 //! Draft immediately after "Start without a project" on a profile with no provider.
 //! Reference: T3 Code v0.1.11 desktop, native fixture 45329928604.
 
+use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::threads::{Conversation, ThreadSummary};
-use incular::{
-    controls::{Button, ButtonStyle, ButtonVariant},
-    prelude::*,
-};
+use incular::prelude::*;
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, label, sidebar, space};
 
@@ -25,8 +23,8 @@ pub fn draft(
         .map(|thread| {
             let open_thread = open_thread.clone();
             Button::with_child(
-                label(&thread.title, 13.0, FontWeight::W400, INK)
-                    .accessibility_label(format!("Open thread: {}", thread.title)),
+                format!("Open thread: {}", thread.title),
+                label(&thread.title, 13.0, FontWeight::W400, INK),
             )
             .style(
                 ButtonStyle::new()

@@ -1,9 +1,9 @@
 //! Local provider settings overlay. The canned provider is available to tests only.
 
 use crate::empty_workspace::{WHITE, label, space};
+use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::profile::{Profile, Provider};
 use incular::{
-    controls::{Button, ButtonStyle, ButtonVariant},
     prelude::*,
     widgets::{BackdropFilter, StackFit, internal::ActionSurface},
 };

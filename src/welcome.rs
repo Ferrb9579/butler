@@ -1,7 +1,5 @@
-use incular::{
-    controls::{Button, ButtonStyle, ButtonVariant},
-    prelude::*,
-};
+use crate::ui::{Button, ButtonStyle, ButtonVariant};
+use incular::prelude::*;
 
 const BACKGROUND: Color = Color::rgba(252, 252, 252, 255);
 const INK: Color = Color::rgba(16, 19, 24, 255);
@@ -175,7 +173,10 @@ fn actions(narrow: bool, complete: impl Fn() + 'static) -> Widget {
         text("Set up one agent to start.", 12.0, FontWeight::W400, MUTED),
         SizedBox::new().width(12.0).into(),
         Button::new("Start")
-            .style(button_style(32.0, ACCENT, Color::rgba(255, 255, 255, 255)))
+            .style(
+                button_style(32.0, ACCENT, Color::rgba(255, 255, 255, 255))
+                    .variant(ButtonVariant::Primary),
+            )
             .enabled(false)
             .into(),
     ])
