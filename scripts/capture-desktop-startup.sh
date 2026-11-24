@@ -1476,6 +1476,19 @@ markdown_fixture_count_label() {
       grep -Fxq -- "$count"
 }
 
+markdown_fixture_query_literal() {
+  local app=$1 file=$2 crop=$3 query=$4 recognized expected=${4// /}
+  recognized=$(
+    "${transform[@]}" "$file" -crop "$crop" +repage -resize 400% \
+      -colorspace gray -contrast-stretch 1%x1% png:- |
+      tesseract stdin stdout --psm 7 2>/dev/null
+  ) || return 1
+  recognized=$(sed 's/[[:space:]]//g' <<<"$recognized") || return 1
+  # Native Butler's focused caret can OCR as one trailing pipe. Keep every
+  # other character (including the paragraph-boundary query's period) exact.
+  [[ "$recognized" == "$expected" || ( "$app" == butler && "$recognized" == "$expected|" ) ]]
+}
+
 await_markdown_fixture_frame() {
   local window=$1 app=$2 title=$3 file=$4 query=${5:-} count=${6:-} anchor_y=${7:-0}
   local tick coords y phase=transcript
@@ -1491,7 +1504,7 @@ await_markdown_fixture_frame() {
       if [[ -n "$coords" ]]; then
         y=${coords##* }
         if (( y >= anchor_y - 5 && y <= anchor_y + 5 )) &&
-           project_literal "$file" "$input" "${query// /}" 7 &&
+           markdown_fixture_query_literal "$app" "$file" "$input" "$query" &&
            markdown_fixture_count_label "$file" "$count" "$y"; then return 0; fi
       fi
     fi
