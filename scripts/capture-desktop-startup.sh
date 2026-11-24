@@ -35,7 +35,7 @@ capture_one() (
   local runtime="$tmp/$profile" window="" tick dimensions ready="" window_pid window_xid=""
   local log="$out/$name.log"
   mkdir -p -m 700 "$runtime"/{config,cache,data,state,run}
-  if [[ "$name" == t3-thread-find ]]; then
+  if [[ "$name" == t3-thread-find || "$name" == t3-compact-details ]]; then
     # The upstream release smoke launches the pinned executable directly and
     # opens the thread by its DOM row. Use that known-good navigation only
     # for this optional fixture, then keep the actual Electron window alive
@@ -43,10 +43,12 @@ capture_one() (
     ready="$runtime/electron.ready"
     set -- env ELECTRON_RUN_AS_NODE=1 timeout --kill-after=8s 210s "$1" \
       "$(dirname -- "${BASH_SOURCE[0]}")/diagnose-reference-find.cjs" \
-      "$t3" "$out/t3-thread-find-renderer-diagnostic.json" "$ready" "$width" "$height" \
-      "$out/t3-thread-find-renderer-diagnostic.png"
+      "$t3" "$out/$name-renderer-diagnostic.json" "$ready" "$width" "$height" \
+      "$out/$name-renderer-diagnostic.png"
     # Do not upload raw helper or Chromium logs.
     log=/dev/null
+  elif [[ "$name" == butler-compact-details ]]; then
+    set -- env 'COMPUTERNAME=Compact Fixture' "$@"
   fi
   XDG_CONFIG_HOME="$runtime/config" XDG_CACHE_HOME="$runtime/cache" \
     XDG_DATA_HOME="$runtime/data" XDG_STATE_HOME="$runtime/state" \
@@ -97,11 +99,12 @@ capture_one() (
     await_new_project_workspace "$window" "$out/$name-startup.png"
   elif [[ "$name" == butler-thread-chooser ]]; then
     await_thread_draft "$window" "$out/$name-startup.png" 'Project Beta'
-  elif [[ "$name" == t3-thread-find || "$name" == butler-thread-find ]]; then
+  elif [[ "$name" == *-thread-find || "$name" == *-compact-details ]]; then
     local thread_title='Release launch check'
-    if [[ "$name" == butler-thread-find ]]; then thread_title='Does the release open'; fi
+    local thread_app=${name%%-*}
+    if [[ "$thread_app" == butler ]]; then thread_title='Does the release open'; fi
     local title_crop
-    title_crop=$(thread_find_row_crop "${name%-thread-find}") || return 1
+    title_crop=$(thread_find_row_crop "$thread_app") || return 1
     await_project_phrase "$window" "$out/$name-startup.png" "$title_crop" "$thread_title" 11 >/dev/null || return 1
   else
     await_text "$window" "$out/$name-startup.png" 'What should we work on' '465x103+535+355'
@@ -203,6 +206,8 @@ capture_one() (
     capture_native_thread_chooser "$window" "$runtime"
   elif [[ "$name" == t3-thread-find || "$name" == butler-thread-find ]]; then
     capture_native_thread_find "$window" "${name%-thread-find}" "$thread_title" "$ready"
+  elif [[ "$name" == t3-compact-details || "$name" == butler-compact-details ]]; then
+    capture_native_compact_details "$window" "$thread_app" "$thread_title"
   fi
 )
 
@@ -1104,6 +1109,138 @@ verify_native_thread_find() {
   done
 }
 
+compact_details_panel() {
+  local app=$1 file=$2 expect=$3
+  if [[ "$app" == butler ]]; then
+    if [[ "$expect" == open ]]; then
+      settings_phrase "$file" '222x41+735+53' 'Compact Fixture' 11 >/dev/null
+    else
+      ! settings_phrase "$file" '222x41+735+53' 'Compact Fixture' 11 >/dev/null
+    fi
+    return
+  fi
+  local crop='278x184+709+48'
+  if [[ "$expect" == open ]]; then
+    settings_phrase "$file" "$crop" 'Open in editor' 11 >/dev/null &&
+      settings_phrase "$file" "$crop" 'Add project script' 11 >/dev/null
+  else
+    ! settings_phrase "$file" "$crop" 'Open in editor' 11 >/dev/null &&
+      ! settings_phrase "$file" "$crop" 'Add project script' 11 >/dev/null
+  fi
+}
+
+compact_details_pixels() {
+  # Compare only the popup lane, not the focused header or blinking editor.
+  "${transform[@]}" "$1" -crop 280x184+708+48 +repage -alpha off -depth 8 rgb:"$2"
+}
+
+await_compact_details_frame() {
+  local window=$1 app=$2 title=$3 state=$4 file=$5 reference=$6 pixels=$7 tick
+  local popup_pixels="$pixels/$state.raw"
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$file" || return 1
+    if [[ $("${identify[@]}" -format '%wx%h' "$file") == '1000x800' ]] &&
+       settings_phrase "$file" '228x29+406+5' "$title" 7 >/dev/null &&
+       settings_phrase "$file" '360x139+291+105' 'The release opens and shows this thread' 11 >/dev/null &&
+       compact_details_panel "$app" "$file" "$state" &&
+       compact_details_pixels "$file" "$popup_pixels"; then
+      if [[ "$state" == open ]]; then
+        # The genuine compact popup may cover the prompt on the right.
+        [[ -s "$reference" ]] && ! cmp -s -- "$reference" "$popup_pixels" && return 0
+      elif settings_phrase "$file" '226x79+742+46' 'Does the release open' 11 >/dev/null &&
+           { [[ -z "$reference" ]] || cmp -s -- "$reference" "$popup_pixels"; }; then
+        return 0
+      fi
+    fi
+    sleep 0.25
+  done
+  printf '%s: native compact details did not verify %s on the selected fixture\n' "$app" "$state" >&2
+  return 1
+}
+
+capture_native_compact_details() {
+  local window=$1 app=$2 title=$3 prefix="$out/$2-compact-details"
+  # Temporary pixel buffers are strictly internal; the originals are the
+  # untouched native frames. Remove buffers on success or a failed gate.
+  local pixels
+  pixels=$(mktemp -d "$tmp/compact-pixels.XXXXXX") || return 1
+  if [[ "$app" == butler ]]; then
+    local title_crop
+    title_crop=$(thread_find_row_crop "$app") || return 1
+    click_project_control "$window" "$prefix-thread-row.png" "$title_crop" "$title" 11 || return 1
+  fi
+  await_compact_details_frame "$window" "$app" "$title" closed "$prefix-closed.png" "" "$pixels" || return 1
+  if [[ "$app" == t3 ]]; then
+    # Exact default shortcut from shared/keybindings.ts. By now the scoped,
+    # checksum-pinned Electron worker confirmed the compact header control.
+    xdotool windowfocus "$window" key ctrl+shift+b || return 1
+  else
+    # The sole right-aligned saved header control is 28px wide, inset 12.
+    xdotool windowfocus "$window" mousemove --window "$window" 974 20 click 1 || return 1
+  fi
+  xdotool mousemove 1390 890 || return 1
+  await_compact_details_frame "$window" "$app" "$title" open "$prefix-open.png" "$pixels/closed.raw" "$pixels" || return 1
+  xdotool windowfocus "$window" key Escape || return 1
+  await_compact_details_frame "$window" "$app" "$title" dismissed "$prefix-dismissed.png" "$pixels/closed.raw" "$pixels"
+}
+
+verify_native_compact_details() {
+  local width=1000 height=800 source=$1 app name runtime binary before after state rc
+  local fixture_sha='e65f15f89a847a264cf4366cd7bcdc31cef1d5fbfd07707ed497cc0f045357b5'
+  local notes="$out/compact-details-capture-notes.txt"
+  touch "$out/t3-compact-details-unverified" "$out/butler-compact-details-unverified" \
+    "$out/compact-details-pair-unverified" || return 1
+  printf '%s\n' \
+    'Optional native compact details at 1000×800, on the same synthetic saved transcript as Thread Find.' \
+    "Pinned T3 v0.1.11 reference database SHA256: $fixture_sha. See provenance.txt for app versions." \
+    'Closed, opened, and Escape-dismissed are raw X11 pixels of the unchanged selected fixture. No provider or project action is used.' \
+    'Butler uses the synthetic local machine label Compact Fixture. The T3 runner machine label is not used in verification.' \
+    >"$notes" || return 1
+  for app in t3 butler; do
+    name="$app-compact-details"
+    runtime=$(realpath -m -- "$tmp/$name") || return 1
+    mkdir -p -m 700 "$runtime/home" || return 1
+    if [[ "$app" == t3 ]]; then
+      if [[ ! -f "$source" || -e /tmp/t3-launch-check-workspace || -L /tmp/t3-launch-check-workspace ]] ||
+         ! mkdir -p -m 700 "$runtime/t3-code/userdata" ||
+         ! cp -- "$source" "$runtime/t3-code/userdata/statev2.sqlite" ||
+         ! printf '%s  %s\n' "$fixture_sha" "$runtime/t3-code/userdata/statev2.sqlite" | sha256sum --check --status; then
+        echo 'Pinned compact details fixture absent/invalid or its workspace already exists; T3 not launched.' | tee -a "$notes" >&2
+        continue
+      fi
+      binary="$t3/t3code"
+    else
+      binary="$butler"
+      seed_butler_thread_find "$runtime" || continue
+      before=$(butler_thread_find_snapshot "$runtime") || continue
+    fi
+    HOME="$runtime/home" T3CODE_HOME="$runtime/t3-code" T3CODE_TELEMETRY_ENABLED=false \
+      T3CODE_DISABLE_AUTO_UPDATE=true GIT_ALLOW_PROTOCOL= GIT_TERMINAL_PROMPT=0 \
+      CAPTURE_PROFILE="$name" capture_one "$name" "$binary"
+    rc=$?
+    if (( rc != 0 )); then
+      printf '%s: optional compact details incomplete; see its unverified marker\n' "$app" | tee -a "$notes" >&2
+      continue
+    fi
+    if [[ "$app" == butler ]]; then
+      after=$(butler_thread_find_snapshot "$runtime") || continue
+      if [[ "$before" != "$after" || -e "$runtime/state/butler/scratch" ]] ||
+         compgen -G "$runtime/state/butler/thread-details-inline-closed-*" >/dev/null; then
+        echo 'Butler compact details changed persistent fixture state; frames remain unverified.' | tee -a "$notes" >&2
+        continue
+      fi
+    fi
+    rm -f -- "$out/$name-unverified" || return 1
+    printf '%s: verified closed → opened from the header/shortcut → Escape dismissed\n' "$app" | tee -a "$notes"
+  done
+  [[ ! -e "$out/t3-compact-details-unverified" && ! -e "$out/butler-compact-details-unverified" ]] || return 1
+  for state in closed open dismissed; do
+    compare_frames "t3-compact-details-$state" "butler-compact-details-$state" "compact-details-$state" || return 1
+  done
+  rm -f -- "$out/compact-details-pair-unverified" || return 1
+  printf '%s\n' 'Compact details: verified route pairs for all three states (raw diagnostic diffs).' | tee -a "$notes"
+}
+
 set +e
 capture_one t3 "$t3/AppRun"
 reference_rc=$?
@@ -1202,5 +1339,14 @@ if [[ -n "${CAPTURE_THREAD_FIND_DB:-}" ]]; then
   set -e
   if (( find_rc != 0 )); then
     echo 'Optional native Thread Find did not complete; see unverified markers' >&2
+  fi
+fi
+if [[ "${CAPTURE_COMPACT_DETAILS:-0}" == 1 ]]; then
+  set +e
+  verify_native_compact_details "${CAPTURE_THREAD_FIND_DB:-}"
+  compact_rc=$?
+  set -e
+  if (( compact_rc != 0 )); then
+    echo 'Optional native compact details did not complete; see unverified markers' >&2
   fi
 fi

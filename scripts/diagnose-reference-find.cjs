@@ -153,11 +153,32 @@ async function main() {
       bannerDismissed = true;
     }
     const summary = await readTranscript();
+    let compactHeader = null;
+    if (size.width === 1000) {
+      stage = "compact-header";
+      const toggle = page.getByRole("button", { name: "Toggle thread details panel", exact: true });
+      await toggle.waitFor({ state: "visible", timeout: 5_000 });
+      compactHeader = {
+        toggle: await toggle.isVisible(),
+        inline: await page.locator('[data-thread-details-panel="inline"]:visible').count(),
+        popover: await page.locator('[data-thread-details-panel="popover"]:visible').count(),
+      };
+      // The compact native flow must start without a card and use the
+      // scoped app control. The real open/dismissal evidence stays in X11.
+      if (!compactHeader.toggle || compactHeader.inline !== 0 || compactHeader.popover !== 0) {
+        report({ stage, failures, compactHeader, incomplete: true });
+        process.exitCode = 1;
+        return;
+      }
+    }
     const nativeSize = await native.evaluate((window) => {
       const { width, height } = window.getBounds();
       return { width, height };
     });
-    const result = { stage: "complete", failures, nativeSize, bannerDismissed, beforeDismiss, ...summary };
+    const result = {
+      stage: "complete", failures, nativeSize, bannerDismissed, beforeDismiss, ...summary,
+      ...(compactHeader === null ? {} : { compactHeader }),
+    };
     report(result);
     if (ready !== undefined) {
       if (nativeSize.width !== size.width || nativeSize.height !== size.height ||

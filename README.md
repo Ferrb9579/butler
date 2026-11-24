@@ -56,3 +56,9 @@ Check the artifact's `thread-find-capture-notes.txt` and per-state
 `*-pair-unverified` markers before using the frames. The checked-in [original
 native comparisons](screenshots/README.md) list the exact build and capture
 run for each pair. They verify matched fixture states, not identical pixels.
+
+The optional compact-details fixture uses fresh profiles and the same saved
+messages at 1000×800. It checks closed, opened from the header, and
+Escape-dismissed; the popup area must return to its original pixels.
+Consult `compact-details-capture-notes.txt` and the separate unverified
+markers before using these frames.

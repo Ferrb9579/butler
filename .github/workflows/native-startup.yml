@@ -76,6 +76,7 @@ jobs:
           CAPTURE_T3_NEW_PROJECT_FORM: '1'
           CAPTURE_GIT_URL_REVIEW: '1'
           CAPTURE_REFERENCE_LANDING: '1'
+          CAPTURE_COMPACT_DETAILS: '1'
           CAPTURE_THREAD_FIND_DB: artifacts/reference/statev2.sqlite
         run: |
           mkdir -p artifacts/ui-native

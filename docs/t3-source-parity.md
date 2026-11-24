@@ -86,7 +86,8 @@ controls, and text shaping/rendering comparisons are still unverified.
   persisted inline preference. The same pointer group lets Find remain in
   use while the popover is open. Tests cover outside click, Escape, thread
   switch, and narrow→wide→narrow. Exact focus-loss dismissal and native
-  narrow geometry remain unverified. Copying the path and the editor,
+  narrow geometry remain unverified. The optional native compact fixture
+  checks closed, open, and Escape-dismissed at 1000×800. Copying the path and the editor,
   scripts, and Git rows are not implemented.
 
 ### Saved-thread composer, without a provider
@@ -94,11 +95,14 @@ controls, and text shaping/rendering comparisons are still unverified.
 - Pinned `ChatView.tsx`, `ComposerSurface.tsx`, and `ChatComposer.tsx`
   anchor the dock in the conversation lane with a 20 px desktop bottom
   inset, 16 px corners, a thin outline, and a two-line minimum editor.
-  The initial Rust port keeps an editable multiline draft per saved thread
-  for this session. Enter inserts a newline; Send is explicitly unavailable
+  Butler keeps an editable multiline draft per saved thread. Enter inserts
+  a newline; Send is explicitly unavailable
   because no provider is configured. Drafts do not write to the transcript.
-- Attachments, microphone, model selection, draft restart persistence,
-  and live send/feedback are not represented by inactive lookalikes.
+- Pinned `composerDraftStore.ts` persists nonempty raw prompt text by
+  thread and debounces local writes. Butler now does the same for plain text
+  only, up to 1 MiB per draft, restoring it from the same local profile.
+  Clearing the field removes just that thread's draft. Attachments,
+  microphone, model selection, and live send/feedback remain out of scope.
 
 ## Implementation boundary
 

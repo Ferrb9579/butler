@@ -4,7 +4,7 @@
 use crate::{settings_icons::compose_send, typography};
 use incular::{
     prelude::*,
-    widgets::{BackdropFilter, internal::ActionSurface},
+    widgets::{BackdropFilter, TextInputFormatter, internal::ActionSurface},
 };
 
 pub const BOTTOM_INSET: f32 = 20.0;
@@ -18,9 +18,15 @@ const RADIUS: f32 = 16.0;
 
 /// The caller owns this saved thread's unsent text controller and places the
 /// dock in the transcript lane. No submission or provider operation exists.
-pub fn view(thread_title: &str, controller: TextEditingController) -> Widget {
+pub fn view(
+    thread_title: &str,
+    controller: TextEditingController,
+    changed: impl Fn(&str) + 'static,
+) -> Widget {
     let editor = Widget::from(
         EditableText::new(controller)
+            .on_changed(changed)
+            .input_formatter(DraftLength)
             .placeholder(PLACEHOLDER)
             .placeholder_color(MUTED)
             .cursor_color(INK)
@@ -98,6 +104,22 @@ pub fn view(thread_title: &str, controller: TextEditingController) -> Widget {
         .into()
 }
 
+struct DraftLength;
+
+impl TextInputFormatter for DraftLength {
+    fn format_edit_update(
+        &self,
+        old: &TextEditingValue,
+        new: &TextEditingValue,
+    ) -> TextEditingValue {
+        if new.text.len() <= crate::composer_drafts::MAX_TEXT_BYTES {
+            new.clone()
+        } else {
+            old.clone()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,7 +133,7 @@ mod tests {
         Runtime::new(
             Directionality::new(
                 TextDirection::Ltr,
-                view("Release launch check", controller.clone()),
+                view("Release launch check", controller.clone(), |_| {}),
             )
             .into(),
         )
@@ -137,6 +159,16 @@ mod tests {
             PaintCommand::RRect { rrect, .. } if rrect.rect.size == Size::new(32.0, 32.0)
                 && rrect.radii.top_left == 16.0
         )));
+    }
+
+    #[test]
+    fn overlarge_utf8_edit_is_rejected_without_truncating_existing_text() {
+        let prior = TextEditingValue::new("Existing draft");
+        let limit = crate::composer_drafts::MAX_TEXT_BYTES;
+        let at_limit = TextEditingValue::new("é".repeat(limit / 2));
+        assert_eq!(DraftLength.format_edit_update(&prior, &at_limit), at_limit);
+        let too_large = TextEditingValue::new("é".repeat(limit / 2 + 1));
+        assert_eq!(DraftLength.format_edit_update(&prior, &too_large), prior);
     }
 
     #[test]

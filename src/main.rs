@@ -1,4 +1,5 @@
 mod about_settings;
+mod composer_drafts;
 mod empty_workspace;
 mod message_jump;
 mod message_search;
@@ -34,7 +35,6 @@ use incular::prelude::*;
 use project_picker::{Picker, ProjectRequest, RemoteFlow, ThreadProjects};
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
     env,
     path::{Path, PathBuf},
     rc::Rc,
@@ -88,6 +88,7 @@ fn application_with_transport(
     let provider_names = provider_settings::Names::new(profile.clone());
     let history_store = state.as_ref().map(ThreadStore::new);
     let details_profile = state.clone();
+    let unsent_saved_drafts = composer_drafts::Drafts::new(state.clone());
     let projects = state.map(LocalProjects::new);
     let saved_project = projects.as_ref().map(LocalProjects::list).transpose();
     let active_project = Signal::new(
@@ -113,7 +114,6 @@ fn application_with_transport(
     );
     let thread_history = Signal::new(initial_history.ok().flatten().unwrap_or_default());
     let selected_thread = Signal::new(None::<Conversation>);
-    let unsent_saved_drafts = Rc::new(RefCell::new(BTreeMap::new()));
     let message_jump = Signal::new(None::<message_jump::Jump>);
     let posted_message_jump = Cell::new(None);
     let thread_find_input = TextEditingController::new();
@@ -222,13 +222,9 @@ fn application_with_transport(
                 let rename_on_new = thread_title_editor.clone();
                 let rename_here = thread_title_editor.clone();
                 let current = selected_thread.get();
-                let saved_input = current.as_ref().map(|turn| {
-                    unsent_saved_drafts
-                        .borrow_mut()
-                        .entry(turn.id)
-                        .or_insert_with(TextEditingController::new)
-                        .clone()
-                });
+                let saved_input = current
+                    .as_ref()
+                    .map(|turn| unsent_saved_drafts.editor(turn.id));
                 let viewport = cx.viewport();
                 let jump = message_jump
                     .get()
@@ -1805,7 +1801,7 @@ mod ui_tests {
     }
 
     #[test]
-    fn saved_composer_keeps_unsent_text_in_its_own_thread() {
+    fn saved_composer_keeps_unsent_text_in_its_own_thread_across_restart() {
         let tmp = Fixture::new();
         let profile = tmp.0.join("profile");
         let folder = tmp.0.join("Project");
@@ -1824,8 +1820,12 @@ mod ui_tests {
         let second = make("Second thread");
         store.save(&first).unwrap();
         store.save(&second).unwrap();
-        let mut app =
-            application(Some(profile), Some(tmp.0.clone()), "Local fixture".into()).unwrap();
+        let mut app = application(
+            Some(profile.clone()),
+            Some(tmp.0.clone()),
+            "Local fixture".into(),
+        )
+        .unwrap();
 
         let read_editor = |app: &mut Application, label: &'static str| {
             let observed = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -1867,6 +1867,47 @@ mod ui_tests {
             read_editor(&mut app, "Message First thread"),
             "Unsent first\nsecond line"
         );
+        drop(app); // clean shutdown flushes the latest edits without waiting for debounce
+        let mut reopened = application(
+            Some(profile.clone()),
+            Some(tmp.0.clone()),
+            "Local fixture".into(),
+        )
+        .unwrap();
+        interact(&mut reopened, |sim| {
+            sim.click("Open thread: First thread").unwrap();
+            sim.focus("Message First thread").unwrap();
+        });
+        assert_eq!(
+            read_editor(&mut reopened, "Message First thread"),
+            "Unsent first\nsecond line"
+        );
+        interact(&mut reopened, |sim| {
+            let modifier = if cfg!(target_os = "macos") {
+                Code::MetaLeft
+            } else {
+                Code::ControlLeft
+            };
+            sim.key_down(modifier).unwrap();
+            sim.press_key(KeyboardKey::Character("a".into()), Code::KeyA)
+                .unwrap();
+            sim.key_up(modifier).unwrap();
+            sim.press(Code::Backspace).unwrap();
+            sim.click("Open thread: Second thread").unwrap();
+            sim.focus("Message Second thread").unwrap();
+        });
+        assert_eq!(
+            read_editor(&mut reopened, "Message Second thread"),
+            "Separate draft"
+        );
+        drop(reopened);
+        let mut reopened =
+            application(Some(profile), Some(tmp.0.clone()), "Local fixture".into()).unwrap();
+        interact(&mut reopened, |sim| {
+            sim.click("Open thread: First thread").unwrap();
+            sim.focus("Message First thread").unwrap();
+        });
+        assert_eq!(read_editor(&mut reopened, "Message First thread"), "");
         assert_eq!(store.load(first.id).unwrap(), Some(first));
         assert_eq!(store.load(second.id).unwrap(), Some(second));
         assert_eq!(fs::read_dir(&folder).unwrap().count(), 0);

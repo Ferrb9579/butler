@@ -26,7 +26,7 @@ pub fn draft(
     find_input: TextEditingController,
     title_editor: crate::thread_title::Editor,
     details: Option<crate::thread_details::LocalDetails>,
-    saved_input: Option<TextEditingController>,
+    saved_input: Option<crate::composer_drafts::Editor>,
     rename: impl Fn(uuid::Uuid, &str) + 'static,
     open_find: impl Fn() + 'static,
     history_error: Option<String>,
@@ -341,9 +341,14 @@ pub fn draft(
                             #[cfg(test)]
                             let dock = dock.filter(|_| offline.is_none());
                             let body = if let Some((input, title)) = dock {
+                                let input = input.clone();
                                 Column::new([
                                     Expanded::new(body).into(),
-                                    crate::saved_composer::view(title, input.clone()),
+                                    crate::saved_composer::view(
+                                        title,
+                                        input.controller.clone(),
+                                        move |text| input.changed(text),
+                                    ),
                                     space(crate::saved_composer::BOTTOM_INSET),
                                 ])
                                 .cross_axis_alignment(CrossAxisAlignment::Stretch)
