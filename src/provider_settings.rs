@@ -233,6 +233,7 @@ impl Section {
 pub struct Navigation {
     section: Signal<Section>,
     expanded: Signal<Option<usize>>,
+    sidebar_scroll: ScrollController,
 }
 
 impl Navigation {
@@ -240,10 +241,12 @@ impl Navigation {
         Self {
             section: Signal::new(Section::Providers),
             expanded: Signal::new(None),
+            sidebar_scroll: ScrollController::default(),
         }
     }
 
     pub fn open_providers(&self) {
+        self.sidebar_scroll.jump_to(0.0);
         self.navigate(Section::Providers);
     }
 
@@ -280,11 +283,14 @@ pub fn overlay(
         let first = Container::new()
             .width(layout.sidebar - 1.0)
             .color(SIDEBAR)
-            .child(SingleChildScrollView::new(sidebar(
-                layout.sidebar == 56.0,
-                section,
-                navigation.clone(),
-            )));
+            .child(
+                SingleChildScrollView::new(sidebar(
+                    layout.sidebar == 56.0,
+                    section,
+                    navigation.clone(),
+                ))
+                .controller(navigation.sidebar_scroll.clone()),
+            );
         let body = match section {
             Section::Providers => details(
                 &device,

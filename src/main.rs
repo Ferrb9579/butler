@@ -738,6 +738,10 @@ mod ui_tests {
             sim.focus("About").unwrap();
             sim.press("Enter".parse().unwrap()).unwrap();
             sim.click("View licenses").unwrap();
+            assert!(
+                sim.focus("About").is_ok(),
+                "sidebar stays at the clicked row"
+            );
             sim.focus("Inter").unwrap();
             sim.press("Enter".parse().unwrap()).unwrap();
             sim.focus("Inter").unwrap();
