@@ -157,3 +157,10 @@ interaction and counts in this fixture, not visual parity.
 - [T3 Code](t3/saved-thread-compact-details-open-light-1000x800.png) · [Butler](butler/saved-thread-compact-details-open-light-1000x800.png)
 - Original 1000×800 X11 frames from [native run 45426627050](https://github.com/Ferrb9579/butler/actions/runs/45426627050), pinned T3 Code `59651c1761f6c63e9b6056839067066968e6a406` and Butler `e7a41e2d075d21cc5fccd57c3cb22009d3725e39`. Both start closed, open through their ordinary controls, and close with Escape. The popup area returns to its exact pre-open pixels in each app. No project or provider action was used.
 - The opened card spans x708–987 from y48 in both. Butler has one workspace row; T3 has additional editor, project-script and Git rows. 268,151 of 800,000 raw pixels differ with the cards open. The closed and dismissed images remain in the original artifact, not duplicate files in the repository.
+
+## Saved-thread Git branch in wide Details (native behavior and layout)
+
+- [T3 Code](t3/saved-thread-branch-details-light-1280x800.png) · [Butler](butler/saved-thread-branch-details-light-1280x800.png)
+- Original 1280×800 X11 frames from [native run 45433209304](https://github.com/Ferrb9579/butler/actions/runs/45433209304), [artifact 14939738090](https://github.com/Ferrb9579/butler/actions/runs/45433209304/artifacts/14939738090). T3 Code v0.1.11 was pinned to `59651c1761f6c63e9b6056839067066968e6a406`; Butler was `aa8ca966c86fc4cef0af03748f8e1e3f6e17c09e`.
+- Both use the same disposable local checkout and selected synthetic transcript. The actual branch `copperleaf` appears in each inline Details card and is absent in the non-Git controls. No remote, provider, branch action, or clipboard interaction was used.
+- 271,013 of 1,024,000 raw pixels differ. This matches the visible branch state, not the rest of the card or pixel parity.
