@@ -1,12 +1,26 @@
 use crate::settings_icons::icon;
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
-use incular::prelude::*;
+use incular::{
+    prelude::*,
+    widgets::{
+        MouseCursor,
+        internal::{
+            ActionInteractionController, ActionPolicy, ActionSplashPolicy, ActionSurface,
+            ExplicitSemantics,
+        },
+    },
+};
+use std::{f32::consts::PI, time::Duration};
 
 const BACKGROUND: Color = Color::rgba(252, 252, 252, 255);
 const INK: Color = Color::rgba(16, 19, 24, 255);
 const MUTED: Color = Color::rgba(105, 112, 128, 255);
 const RULE: Color = Color::rgba(238, 238, 240, 255);
 const ACCENT: Color = Color::rgba(107, 140, 228, 255);
+const AGENT_TRIGGER: &str = "Set up an agent";
+const TRIGGER_INK: Color = Color::rgba(24, 24, 27, 255);
+const TRIGGER_MUTED: Color = Color::rgba(113, 113, 123, 255);
+const TRIGGER_RING: Color = Color::rgba(27, 78, 216, 255);
 
 pub fn view(
     device: &str,
@@ -69,35 +83,80 @@ pub fn view(
         .into()
 }
 
-fn agents_section(narrow: bool, expanded: bool, agents_open: Signal<bool>) -> Widget {
-    let title = Button::with_child(
-        "Set up an agent",
-        Row::new(vec![
-            icon("plus", 16.0, MUTED),
-            text("Set up an agent", 14.0, FontWeight::W400, INK),
-            icon(
-                if expanded {
-                    "chevron-up"
-                } else {
-                    "chevron-down"
-                },
-                16.0,
-                MUTED,
-            ),
-        ])
-        .spacing(12.0)
-        .main_axis_size(MainAxisSize::Min)
-        .cross_axis_alignment(CrossAxisAlignment::Center)
-        .into(),
+fn row_icon(mark: Widget) -> Widget {
+    Container::new()
+        .width(20.0)
+        .height(20.0)
+        .alignment(Alignment::CENTER)
+        .child(mark)
+        .into()
+}
+
+fn agent_trigger(expanded: bool, agents_open: Signal<bool>) -> Widget {
+    // WelcomePage.tsx RowIcon and CollapsibleTrigger: no inset or hover fill
+    // in the no-agent state. The only exterior chrome is the keyboard ring.
+    let plus = row_icon(icon("plus", 16.0, TRIGGER_MUTED));
+    let label = Text::new(AGENT_TRIGGER).style(
+        crate::typography::interface()
+            .font_size(14.0)
+            .line_height_absolute(20.0)
+            .font_weight(FontWeight::W400)
+            .color(TRIGGER_INK),
+    );
+    let down = icon("chevron-down", 16.0, TRIGGER_MUTED);
+    let chevron = if expanded {
+        Widget::from(Transform::rotation(PI, down))
+    } else {
+        down
+    };
+    let row = Widget::from(
+        Row::new([plus, Expanded::new(label).into(), chevron])
+            .spacing(12.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center),
     )
-    .style(button_style(32.0, BACKGROUND, INK).variant(ButtonVariant::Ghost))
-    .on_click(move || agents_open.update(|open| *open = !*open));
-    let mut right: Vec<Widget> = vec![
-        Container::new()
-            .alignment(Alignment::CENTER_LEFT)
-            .child(title)
-            .into(),
-    ];
+    .exclude_semantics();
+    let state = ActionInteractionController::new();
+    let interaction = state.clone();
+    let surface = Widget::stateful_builder(interaction.revision(), move |_| {
+        let mut frame = Container::new()
+            .constraints(Constraints::new(0.0, f32::INFINITY, 40.0, f32::INFINITY))
+            .child(row.clone());
+        if interaction.state().focused {
+            // Paint over the row rather than adding decoration padding.
+            frame = frame.foreground_decoration(
+                BoxDecoration::new()
+                    .border(Border::new(2.0, TRIGGER_RING))
+                    .border_radius(BorderRadius::circular(6.0)),
+            );
+        }
+        frame.into()
+    });
+    Widget::from(
+        ActionSurface::with_child(surface)
+            .label(AGENT_TRIGGER)
+            .interaction_controller(state)
+            .mouse_cursor(MouseCursor::Click)
+            .policy(ActionPolicy {
+                feedback_enabled: false,
+                splash: ActionSplashPolicy::None,
+                transition_duration: Duration::ZERO,
+            })
+            .on_press(move || agents_open.update(|open| *open = !*open)),
+    )
+    .semantics(
+        ExplicitSemantics::new(SemanticRole::Button)
+            .label(AGENT_TRIGGER)
+            .state(SemanticState {
+                focusable: true,
+                expanded: Some(expanded),
+                ..SemanticState::default()
+            })
+            .actions([SemanticActionKind::Focus, SemanticActionKind::Activate]),
+    )
+}
+
+fn agents_section(narrow: bool, expanded: bool, agents_open: Signal<bool>) -> Widget {
+    let mut right = vec![agent_trigger(expanded, agents_open)];
     if expanded {
         right.push(gap(6.0));
         let left = [
@@ -128,7 +187,7 @@ fn agents_section(narrow: bool, expanded: bool, agents_open: Signal<bool>) -> Wi
                 );
             }
         }
-        right.push(agent(("More agents in the ACP Registry", "Browse")));
+        right.push(registry_row());
     }
     section(
         "Agents",
@@ -137,6 +196,30 @@ fn agents_section(narrow: bool, expanded: bool, agents_open: Signal<bool>) -> Wi
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .into(),
     )
+}
+
+fn registry_row() -> Widget {
+    Container::new()
+        .height(36.0)
+        .child(
+            Row::new([
+                row_icon(crate::settings_icons::acp_registry_mark(16.0)),
+                Expanded::new(text(
+                    "More agents in the ACP Registry",
+                    14.0,
+                    FontWeight::W400,
+                    INK,
+                ))
+                .into(),
+                Button::new("Browse")
+                    .style(button_style(24.0, Color::WHITE, INK))
+                    .enabled(false)
+                    .into(),
+            ])
+            .spacing(12.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center),
+        )
+        .into()
 }
 
 fn phone_section(narrow: bool) -> Widget {
@@ -246,4 +329,168 @@ fn gap(size: f32) -> Widget {
 
 fn divider() -> Widget {
     Container::new().height(1.0).color(RULE).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incular::{
+        core::Transform as Matrix,
+        rendering::{Brush, PaintCommand},
+        runtime::Runtime,
+    };
+
+    #[test]
+    fn registry_mark_paints_black_centered_in_its_existing_agent_lane() {
+        let root = Directionality::new(
+            TextDirection::Ltr,
+            Align::new(
+                Alignment::TOP_LEFT,
+                section("Agents", false, registry_row()),
+            ),
+        );
+        let mut runtime = Runtime::new(root.into()).unwrap();
+        let (display, _) = runtime
+            .run_frame(Constraints::tight(Size::new(720.0, 120.0)))
+            .unwrap();
+        let mut matrices = vec![Matrix::IDENTITY];
+        let mut marks = Vec::new();
+        for command in display.commands() {
+            match command {
+                PaintCommand::PushTransform { transform } => {
+                    matrices.push(matrices.last().unwrap().then(*transform));
+                }
+                PaintCommand::PopTransform => {
+                    matrices.pop();
+                }
+                PaintCommand::FillPath {
+                    path,
+                    brush: Brush::Solid(color),
+                    fill_rule,
+                } if *color == Color::BLACK => {
+                    assert_eq!(*fill_rule, FillRule::NonZero);
+                    marks.push(
+                        matrices
+                            .last()
+                            .unwrap()
+                            .transform_rect_bbox(path.bounds().unwrap()),
+                    );
+                }
+                _ => {}
+            }
+        }
+        let [mark] = marks.as_slice() else {
+            panic!("expected one ACP mark, got {marks:?}");
+        };
+        // The existing section's content starts at x138. The original wide
+        // mark aspect-fits 16px with 2px on both sides of its 20px slot.
+        assert!((mark.origin.x - 140.0).abs() < 0.15, "{mark:?}");
+        assert!((mark.size.width - 16.0).abs() < 0.15, "{mark:?}");
+        assert!(
+            (mark.origin.y + mark.size.height / 2.0 - 18.0).abs() < 0.15,
+            "{mark:?}"
+        );
+        assert!(
+            (mark.size.height - 16.0 * 220.0 / 576.0).abs() < 0.15,
+            "{mark:?}"
+        );
+    }
+
+    #[test]
+    fn agent_trigger_uses_the_whole_lane_with_original_rotated_icons() {
+        crate::typography::register();
+        let near = |actual: f32, expected: f32| {
+            assert!(
+                (actual - expected).abs() < 0.1,
+                "expected {expected}, got {actual}"
+            );
+        };
+        for (width, narrow, expanded) in [(720.0, false, false), (402.0, true, true)] {
+            let left = if narrow { 0.0 } else { 138.0 };
+            let y = if narrow { 32.0 } else { 0.0 };
+            let widget = section(
+                "Agents",
+                narrow,
+                agent_trigger(expanded, Signal::new(expanded)),
+            );
+            let root =
+                Directionality::new(TextDirection::Ltr, Align::new(Alignment::TOP_LEFT, widget));
+            let mut runtime = Runtime::new(root.into()).unwrap();
+            let (display, _) = runtime
+                .run_frame(Constraints::tight(Size::new(width, 120.0)))
+                .unwrap();
+
+            let semantics = runtime.tree().semantics();
+            let mut pending = semantics.roots().to_vec();
+            let mut buttons = Vec::new();
+            while let Some(id) = pending.pop() {
+                let Some(node) = semantics.node(id) else {
+                    continue;
+                };
+                if node.label.as_deref() == Some(AGENT_TRIGGER) {
+                    buttons.push(node);
+                }
+                pending.extend(node.children.iter().copied());
+            }
+            assert_eq!(buttons.len(), 1);
+            let button = buttons[0];
+            assert_eq!(button.role, SemanticRole::Button);
+            assert_eq!(button.state.expanded, Some(expanded));
+            assert!(button.actions.contains(&SemanticActionKind::Activate));
+            assert_eq!(
+                button.bounds,
+                Rect::from_origin_size(Offset::new(left, y), Size::new(width - left, 40.0))
+            );
+
+            let mut matrices = vec![Matrix::IDENTITY];
+            let mut icons = Vec::new();
+            let mut label = None;
+            for command in display.commands() {
+                match command {
+                    PaintCommand::PushTransform { transform } => {
+                        matrices.push(matrices.last().unwrap().then(*transform));
+                    }
+                    PaintCommand::PopTransform => {
+                        matrices.pop();
+                    }
+                    PaintCommand::StrokePath {
+                        path,
+                        brush: Brush::Solid(color),
+                        ..
+                    } if *color == TRIGGER_MUTED => {
+                        let transform = *matrices.last().unwrap();
+                        let local = path.bounds().unwrap();
+                        let path_box = transform.transform_rect_bbox(local);
+                        let upper = transform.transform_point(local.origin);
+                        let lower = transform
+                            .transform_point(local.origin + Offset::new(0.0, local.size.height));
+                        icons.push((path_box, upper, lower));
+                    }
+                    PaintCommand::GlyphRun { run, color } if *color == TRIGGER_INK => {
+                        near(run.font_size, 14.0);
+                        let at = matrices
+                            .last()
+                            .unwrap()
+                            .transform_point(run.origin + run.glyphs[0].offset);
+                        label.get_or_insert(at.x);
+                    }
+                    PaintCommand::Border { .. } => {
+                        panic!("the untouched trigger has no border or ring")
+                    }
+                    _ => {}
+                }
+            }
+            near(label.unwrap(), left + 32.0);
+            assert_eq!(icons.len(), 2);
+            let (plus, _, _) = icons[0];
+            near(plus.origin.x, left + 2.0 + 5.0 * 16.0 / 24.0);
+            near(plus.size.width, 14.0 * 16.0 / 24.0);
+            near(plus.origin.y + plus.size.height / 2.0, y + 20.0);
+            let (chevron, start, middle) = icons[1];
+            near(chevron.origin.x, width - 12.0);
+            near(chevron.size.width, 8.0);
+            near(chevron.origin.y + chevron.size.height / 2.0, y + 20.0);
+            assert_eq!(middle.y < start.y, expanded);
+        }
+    }
 }

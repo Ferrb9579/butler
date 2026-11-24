@@ -50,6 +50,9 @@ fn make_path(commands: &[Segment]) -> Arc<Path> {
 
 use Segment::{C, L, M, Z};
 
+#[path = "acp_registry_mark_generated.rs"]
+mod acp_registry_mark_generated;
+
 struct Brand {
     view_box: Rect,
     rule: FillRule,
@@ -87,6 +90,27 @@ pub fn provider_brand(driver: &str, size: f32, current_color: Color, dark: bool)
     let Some((brand, fill)) = brand(driver, current_color, dark) else {
         return SizedBox::new().width(size).height(size).into();
     };
+    paint_brand(brand, size, fill)
+}
+
+/// The published pure-black ACP Registry mark, for the light Welcome surface.
+pub fn acp_registry_mark(size: f32) -> Widget {
+    paint_brand(acp_brand(), size.max(0.0), Color::BLACK)
+}
+
+fn acp_brand() -> &'static Brand {
+    static ACP: OnceLock<Brand> = OnceLock::new();
+    ACP.get_or_init(|| {
+        Brand::new(
+            Offset::ZERO,
+            Size::new(576.0, 220.0),
+            FillRule::NonZero,
+            acp_registry_mark_generated::PATH,
+        )
+    })
+}
+
+fn paint_brand(brand: &Brand, size: f32, fill: Color) -> Widget {
     let mut canvas = Canvas::default();
     canvas.save_transform(brand.fit(size));
     canvas.fill_path(brand.path.clone(), fill, brand.rule);
@@ -139,6 +163,20 @@ fn brand(driver: &str, current_color: Color, dark: bool) -> Option<(&'static Bra
 #[cfg(test)]
 mod brand_tests {
     use super::*;
+
+    #[test]
+    fn acp_mark_keeps_the_original_wide_view_box_in_the_square_slot() {
+        let acp = acp_brand();
+        assert_eq!(acp.rule, FillRule::NonZero);
+        let transform = acp.fit(16.0);
+        let top_left = transform.transform_point(Offset::ZERO);
+        let bottom_right = transform.transform_point(Offset::new(576.0, 220.0));
+        let fitted_height = 16.0 * 220.0 / 576.0;
+        assert!(top_left.x.abs() < 0.001);
+        assert!((bottom_right.x - 16.0).abs() < 0.001);
+        assert!((bottom_right.y - top_left.y - fitted_height).abs() < 0.001);
+        assert!((top_left.y + bottom_right.y - 16.0).abs() < 0.001);
+    }
 
     #[test]
     fn fits_source_viewboxes_and_preserves_logo_cutouts() {

@@ -29,3 +29,7 @@ Butler retains its own product identity. Vendor and OS marks are not part
 of these exports, and the existing three provider identifiers stay
 separate from this set. Extend the manifest from pinned source when a
 new surface calls for another licensed glyph.
+
+The separately sourced [ACP Registry mark](../brands/README.md) is not an
+AppImage export. Its official brand permission, raw asset, and deterministic
+native geometry are verified independently.

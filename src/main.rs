@@ -1035,6 +1035,80 @@ mod ui_tests {
     }
 
     #[test]
+    fn welcome_agent_disclosure_remains_a_full_width_pointer_keyboard_and_semantic_action() {
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        let mut app = application(
+            Some(profile.clone()),
+            Some(tmp.0.clone()),
+            "Local device".into(),
+        )
+        .unwrap();
+        let window = app.active_window_ids()[0];
+        let observe = |app: &mut Application| {
+            app.process_runtime_work();
+            app.run_window_frame_at(
+                window,
+                Constraints::tight(Size::new(1280.0, 800.0)),
+                std::time::Instant::now(),
+            )
+            .unwrap()
+            .unwrap();
+            let (send, receive) = std::sync::mpsc::channel();
+            app.dispatch(move |runtime| {
+                let semantics = runtime.tree().semantics();
+                let mut ids = semantics.roots().to_vec();
+                let mut trigger = None;
+                let mut body_visible = false;
+                while let Some(id) = ids.pop() {
+                    let Some(node) = semantics.node(id) else {
+                        continue;
+                    };
+                    if node.label.as_deref() == Some("Set up an agent")
+                        && node.role == SemanticRole::Button
+                    {
+                        assert!(trigger.is_none());
+                        trigger = Some((id, node.bounds, node.state.expanded));
+                    }
+                    body_visible |= node.label.as_deref() == Some("Antigravity");
+                    ids.extend(node.children.iter().copied());
+                }
+                send.send((trigger.unwrap(), body_visible)).unwrap();
+            });
+            app.process_runtime_work();
+            receive.try_recv().unwrap()
+        };
+        let ((_, bounds, open), visible) = observe(&mut app);
+        assert_eq!(open, Some(true));
+        assert!(visible);
+        assert_eq!(bounds.size, Size::new(582.0, 40.0));
+        let right = Offset::new(
+            bounds.origin.x + bounds.size.width - 3.0,
+            bounds.origin.y + 20.0,
+        );
+        interact(&mut app, move |sim| sim.click_at(right).unwrap());
+        let ((_, collapsed_bounds, open), visible) = observe(&mut app);
+        assert_eq!(open, Some(false));
+        assert_eq!(collapsed_bounds, bounds);
+        assert!(!visible);
+        interact(&mut app, |sim| {
+            sim.focus("Set up an agent").unwrap();
+            sim.press(Code::Enter).unwrap();
+        });
+        let ((id, reopened, open), visible) = observe(&mut app);
+        assert_eq!(open, Some(true));
+        assert_eq!(reopened, bounds);
+        assert!(visible);
+        app.dispatch(move |runtime| {
+            assert!(runtime.dispatch_semantic_action(id, SemanticAction::Activate))
+        });
+        let ((_, _, open), visible) = observe(&mut app);
+        assert_eq!(open, Some(false));
+        assert!(!visible);
+        assert!(!Profile::new(&profile).onboarding_completed().unwrap());
+    }
+
+    #[test]
     fn creates_a_managed_project_and_reopens_its_original_title() {
         let tmp = Fixture::new();
         let state = tmp.0.join("profile");

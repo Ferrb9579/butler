@@ -9,6 +9,23 @@ an assertion of identical pixels or behavior.
 
 Paths below are relative to the pinned upstream tree.
 
+## Welcome onboarding
+
+- `apps/web/src/components/onboarding/WelcomePage.tsx:401–407,679–695`:
+  the existing no-agent disclosure fills its content lane with a minimum
+  40 px hit target. Its 20×20 px lead box centers the original 16 px Plus
+  glyph; the 14/20 px label starts 12 px after the box. The same 16 px
+  ChevronDown reaches the far edge and rotates 180° when open, without
+  changing the row's layout. In the no-agent state it remains transparent
+  at rest, with a 6 px corner and inset focus ring. The retained button
+  exposes the real expanded state and one activation. This is the
+  existing lane and existing offline panel, not a port of the closed
+  provider-logo preview, install, phone, or privacy controls.
+- `WelcomePage.tsx:707–723` places the ACP Registry mark in a 20×20 px
+  RowIcon slot, with the source 16 px aspect-fit box. The existing
+  light catalogue row uses the published pure-black mark; its disabled
+  Browse control remains unchanged. Other provider marks are independent.
+
 ## Settings / Providers
 
 | Source | Resolved reference at default 16 px root | Butler status |
