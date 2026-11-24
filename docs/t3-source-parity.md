@@ -91,3 +91,8 @@ keyboard focus restoration, and close animation are not implemented here.
   owner-scoped task primitive. The input's trailing Create/Enter control shows
   Creating and rejects duplicates until completion. Cancel and reference-only
   publishing flows are not ported.
+
+In Open source licenses, T3's search at `OpenSourceLicenses.tsx:135–229`
+and `thirdPartyLicenses.ts:96–112` maps to an app-owned chip and editor with
+metadata-only AND filtering. Counts, no-results text, Escape and empty blur
+are translated. Raw input autofocus is still logged in `INCULAR-GAPS.md`.

@@ -825,6 +825,30 @@ mod ui_tests {
     }
 
     #[test]
+    fn filters_bundled_licenses_and_escape_leaves_settings_open() {
+        let tmp = Fixture::new();
+        let root = tmp.0.join("profile");
+        Profile::new(&root).complete_onboarding().unwrap();
+        let mut app = application(Some(root), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open provider settings").unwrap();
+            sim.move_mouse_to(Offset::new(135.0, 600.0)).unwrap();
+            sim.scroll(Offset::new(0.0, 320.0)).unwrap();
+            sim.focus("About").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.click("View licenses").unwrap();
+            sim.click("Search open-source licenses").unwrap();
+            sim.focus("Search licenses").unwrap();
+            sim.type_text("mit").unwrap();
+            assert!(sim.focus("Inter").is_err());
+            sim.press("Escape".parse().unwrap()).unwrap();
+            sim.focus("Inter").unwrap();
+            sim.focus("Back to workspace").unwrap();
+        });
+    }
+
+    #[test]
     fn toggles_a_provider_preference_without_changing_selection_or_connecting() {
         use butler::profile::Provider;
         let tmp = Fixture::new();

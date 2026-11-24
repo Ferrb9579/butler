@@ -234,6 +234,7 @@ pub struct Navigation {
     section: Signal<Section>,
     expanded: Signal<Option<usize>>,
     sidebar_scroll: ScrollController,
+    license_search: about_settings::LicenseSearch,
 }
 
 impl Navigation {
@@ -242,6 +243,7 @@ impl Navigation {
             section: Signal::new(Section::Providers),
             expanded: Signal::new(None),
             sidebar_scroll: ScrollController::default(),
+            license_search: about_settings::LicenseSearch::new(),
         }
     }
 
@@ -253,6 +255,7 @@ impl Navigation {
     fn navigate(&self, section: Section) {
         if self.section.get() != section {
             self.expanded.set(None);
+            self.license_search.reset();
             self.section.set(section);
         }
     }
@@ -311,9 +314,14 @@ pub fn overlay(
             }
             Section::Licenses => {
                 let nav = navigation.clone();
-                about_settings::licenses(compact, expanded, move |value| {
-                    nav.expanded.set(value);
-                })
+                about_settings::licenses(
+                    compact,
+                    expanded,
+                    move |value| {
+                        nav.expanded.set(value);
+                    },
+                    navigation.license_search.clone(),
+                )
             }
         };
         let detail = settings_page(&layout, section, compact, body, go_back.clone());
