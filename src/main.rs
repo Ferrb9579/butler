@@ -1209,6 +1209,114 @@ mod ui_tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
+    fn git_url_footer_hints_only_working_actions_and_keyboard_keeps_clone_explicit() {
+        fn never_clone(_: &str, _: &CloneWorkspace) -> std::io::Result<()> {
+            panic!("the Git URL keyboard test must not reach the clone transport")
+        }
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        let home_before = fs::read_dir(&tmp.0).unwrap().count();
+        Profile::new(&state).complete_onboarding().unwrap();
+        let mut app = application_with_transport(
+            Some(state.clone()),
+            Some(tmp.0.clone()),
+            "Fixture".into(),
+            never_clone,
+        )
+        .unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Add project").unwrap();
+            sim.click("Git URL").unwrap();
+        });
+
+        use incular::core::Transform;
+        use incular::rendering::{Brush, PaintCommand};
+        let window = app.active_window_ids()[0];
+        app.process_runtime_work();
+        let (display, _) = app
+            .run_window_frame_at(
+                window,
+                Constraints::tight(Size::new(1280.0, 800.0)),
+                std::time::Instant::now(),
+            )
+            .unwrap()
+            .unwrap();
+        let mut transforms = vec![Transform::IDENTITY];
+        let mut footer = None;
+        let mut keys = Vec::new();
+        for command in display.commands() {
+            match command {
+                PaintCommand::PushTransform { transform } => {
+                    transforms.push(transforms.last().unwrap().then(*transform));
+                }
+                PaintCommand::PopTransform => {
+                    transforms.pop();
+                }
+                PaintCommand::RRect {
+                    rrect,
+                    brush: Brush::Solid(color),
+                } => {
+                    let top_left = transforms
+                        .last()
+                        .unwrap()
+                        .transform_point(rrect.rect.origin);
+                    if *color == Color::rgba(24, 24, 27, 6) {
+                        footer = Some((top_left, rrect.rect.size));
+                    } else if *color == Color::rgba(24, 24, 27, 20) {
+                        keys.push((top_left, rrect.rect.size));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let (origin, size) = footer.expect("Git URL footer drawn");
+        assert_eq!(size, Size::new(574.0, 41.0));
+        // Include footer descendants only; the application can paint the
+        // same alpha elsewhere (e.g. in the header or background).
+        keys.retain(|(point, _)| point.y == origin.y + 11.0);
+        keys.sort_by(|left, right| left.0.x.total_cmp(&right.0.x));
+        assert_eq!(keys.len(), 3, "Continue, Back and Close keycaps only");
+        assert_eq!(keys[0].0.x, origin.x + 16.0);
+        assert!(keys.iter().all(|(_, size)| size.height == 20.0));
+        assert!(keys[1].1.width > keys[0].1.width);
+        assert!(keys[2].1.width < keys[0].1.width);
+
+        interact(&mut app, |sim| {
+            sim.focus("Enter Git clone URL").unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.focus("Enter Git clone URL").unwrap();
+            sim.type_text("x").unwrap();
+            sim.press(Code::Backspace).unwrap();
+            sim.focus("Enter Git clone URL").unwrap(); // deletion did not back out
+            sim.press(Code::Backspace).unwrap();
+            sim.focus("Git URL").unwrap();
+            assert!(sim.focus("Enter Git clone URL").is_err());
+
+            sim.click("Git URL").unwrap();
+            sim.focus("Enter Git clone URL").unwrap();
+            sim.press(Code::Escape).unwrap();
+            assert!(sim.focus("Git URL").is_err()); // direct Close, not Back
+            assert!(sim.focus("Enter Git clone URL").is_err());
+
+            sim.click("Add project").unwrap();
+            sim.click("Git URL").unwrap();
+            sim.click("Close").unwrap(); // preserve the pointer path
+            assert!(sim.focus("Enter Git clone URL").is_err());
+
+            sim.click("Add project").unwrap();
+            sim.click("Git URL").unwrap();
+            sim.type_into("Enter Git clone URL", "ButlerFixture/CaseRepo")
+                .unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.focus("Enter path (e.g. ~/projects/my-app)").unwrap();
+        });
+        assert_eq!(fs::read_dir(&tmp.0).unwrap().count(), home_before + 1);
+        assert!(!tmp.0.join("CaseRepo").exists());
+        assert!(LocalProjects::new(state).list().unwrap().is_empty());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
     fn failed_git_url_checkout_leaves_destination_and_registry_untouched() {
         fn offline_failure(_: &str, workspace: &CloneWorkspace) -> std::io::Result<()> {
             fs::write(workspace.path().join("partial"), b"incomplete")?;

@@ -20,6 +20,12 @@ use std::{
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, label, space};
 
+// T3's light CommandFooter mixes zinc-900 into its surface at these opacities.
+const FOOTER_RULE: Color = Color::rgba(24, 24, 27, 18);
+const FOOTER_FILL: Color = Color::rgba(24, 24, 27, 6);
+const FOOTER_KEY: Color = Color::rgba(24, 24, 27, 20);
+const FOOTER_INK: Color = Color::rgba(24, 24, 27, 255);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Picker {
     Closed,
@@ -212,6 +218,7 @@ pub fn overlay(
     let close = step.clone();
     let shortcut_step = step.clone();
     let shortcut_edit = new_name.clone();
+    let shortcut_url = remote.url.clone();
     let header_create: Widget = if current == Picker::RemoteUrl {
         let enabled = !remote.url_text.get().trim().is_empty();
         let remote = remote.clone();
@@ -800,7 +807,11 @@ pub fn overlay(
         }
         Picker::Closed => unreachable!(),
     }
-    let footer = if current == Picker::New {
+    let footer = if current == Picker::RemoteUrl {
+        remote_url_footer(move || {
+            close.set(Picker::Closed);
+        })
+    } else if current == Picker::New {
         let hint = |key, sentence| {
             Widget::from(
                 Row::new(vec![
@@ -852,11 +863,11 @@ pub fn overlay(
             }),
         )
     };
-    rows.extend([
-        space(if current == Picker::New { 10.0 } else { 16.0 }),
-        Container::new().height(1.0).color(RULE).into(),
-        footer,
-    ]);
+    rows.push(space(if current == Picker::New { 10.0 } else { 16.0 }));
+    if current != Picker::RemoteUrl {
+        rows.push(Container::new().height(1.0).color(RULE).into());
+    }
+    rows.push(footer);
 
     let popup = Container::new()
         .width(576.0)
@@ -888,20 +899,28 @@ pub fn overlay(
         GestureDetector::new(popup)
             .callbacks(GestureCallbacks {
                 on_key: Some(Rc::new(move |event| {
+                    let active_editor = match current {
+                        Picker::New => Some(&shortcut_edit),
+                        Picker::RemoteUrl => Some(&shortcut_url),
+                        _ => None,
+                    };
                     if creating
                         || !event.state.is_down()
-                        || (current == Picker::New
-                            && (shortcut_edit.preedit().is_some()
-                                || shortcut_edit.composing().is_some()))
+                        || active_editor.is_some_and(|edit| {
+                            edit.preedit().is_some() || edit.composing().is_some()
+                        })
                     {
                         return false;
                     }
                     if event.code == Code::Escape {
                         shortcut_step.set(Picker::Closed);
                         true
-                    } else if current == Picker::New
-                        && event.code == Code::Backspace
-                        && name_preview.get().is_empty()
+                    } else if event.code == Code::Backspace
+                        && match current {
+                            Picker::New => name_preview.get().is_empty(),
+                            Picker::RemoteUrl => shortcut_url.text().is_empty(),
+                            _ => false,
+                        }
                     {
                         shortcut_step.set(Picker::Sources);
                         true
@@ -915,6 +934,76 @@ pub fn overlay(
     ])
     .alignment(Alignment::TOP_CENTER)
     .into()
+}
+
+/// CommandPaletteContent.tsx, ui/command.tsx and ui/kbd.tsx.
+/// Only hint at keys Butler actually handles. Keep the existing pointer Close
+/// action: the stock palette does not yet match T3's modal focus handling.
+fn remote_url_footer(close: impl Fn() + 'static) -> Widget {
+    let hint = |key: &'static str, title: &'static str| {
+        let children: Vec<Widget> = vec![
+            Container::new()
+                .height(20.0)
+                .constraints(Constraints::new(20.0, f32::INFINITY, 20.0, 20.0))
+                .padding(EdgeInsets::symmetric(4.0, 0.0))
+                .alignment(Alignment::CENTER)
+                .decoration(
+                    BoxDecoration::new()
+                        .color(FOOTER_KEY)
+                        .border_radius(BorderRadius::all(Radius::circular(4.0))),
+                )
+                .child(
+                    Text::new(key).style(
+                        crate::typography::interface()
+                            .font_size(12.0)
+                            .line_height_absolute(16.0)
+                            .font_weight(FontWeight::W500)
+                            .color(FOOTER_INK),
+                    ),
+                )
+                .into(),
+            Text::new(title)
+                .style(
+                    crate::typography::interface()
+                        .font_size(14.0)
+                        .line_height_absolute(20.0)
+                        .font_weight(FontWeight::W500)
+                        .color(MUTED),
+                )
+                .into(),
+        ];
+        Row::new(children)
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Center)
+            .spacing(4.0)
+    };
+    let items: Vec<Widget> = vec![
+        hint("Enter", "Continue").into(),
+        hint("Backspace", "Back").into(),
+        ActionSurface::with_child(hint("Esc", "Close"))
+            .label("Close")
+            .on_press(close)
+            .into(),
+    ];
+    let items = Row::new(items)
+        .main_axis_size(MainAxisSize::Min)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .spacing(12.0);
+    Container::new()
+        .decoration(
+            BoxDecoration::new()
+                .color(FOOTER_FILL)
+                .border_radius(BorderRadius::vertical(Radius::ZERO, Radius::circular(15.0))),
+        )
+        .child(
+            Column::new(vec![
+                Container::new().height(1.0).color(FOOTER_RULE).into(),
+                row(40.0, items),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch),
+        )
+        .into()
 }
 
 fn source(icon_text: &str, title: &str, description: &str, ready: bool) -> Widget {

@@ -208,7 +208,17 @@ shortcuts. Autofocus and arrow-driven result navigation are not ported.
 
 Git URL now opens the review step from the pinned `CommandPalette.tsx`
 at lines 2191–2231 before any Git request. It shows a normalized Repository
-summary and an editable case-preserving destination. This first safe path
+summary and an editable case-preserving destination. The URL-entry footer
+follows the relevant key groups in `CommandPaletteContent.tsx:94–126`,
+`ui/command.tsx:224–234` and `ui/kbd.tsx:5–34`: 20px keycaps, 4px within
+groups, 12px between groups and a 16px inset. With the URL field focused,
+Enter reviews an eligible URL, Backspace returns to Sources only when the
+field was already empty, and Escape closes. The existing pointer Close also
+remains available. Directional result navigation is not advertised; raw
+input autofocus, modal focus and composing Enter remain governed by
+IG-001, IG-004 and IG-007.
+
+This first safe clone path
 accepts only default-port public GitHub/GitLab HTTPS with a trusted system
 Git, requires an existing owned destination parent and an explicit Clone
 activation, and registers only a completed no-replace checkout. That
