@@ -32,3 +32,13 @@ examples. Set `T3_STORAGE_STATE` to a local Playwright storage-state file if
 the reference screen requires sign-in. Keep that file outside the repo.
 Use `UI_THEME=light` for light-mode captures. Compare interaction and keyboard
 behavior separately using the same project, thread, and provider fixture.
+
+### Native desktop startup diagnostic
+
+The [Native startup capture](.github/workflows/native-startup.yml) GitHub
+Actions workflow builds Butler and runs both native Linux windows under Xvfb.
+It uses the checksum-verified T3 Code v0.1.11 AppImage, not the newer
+source checkout above. Download the `native-startup` artifact for PNGs,
+pixel diff, app logs, and exact revisions. It uses clean profiles and records
+each app's default startup state. This is a diagnostic, not evidence that the
+two apps reached an equivalent fixture or passed UI parity.

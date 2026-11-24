@@ -1,0 +1,71 @@
+name: Native startup capture
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/native-startup.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/capture-desktop-startup.sh'
+      - 'src/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-startup-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth xdotool x11-utils imagemagick \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libxcb-shape0-dev libxcb-xfixes0-dev mesa-vulkan-drivers \
+            libvulkan1 libasound2t64 libgtk-3-0t64 libnss3
+      - name: Build Butler with locked dependencies
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          cargo +1.100.0 build --locked
+      - name: Verify and extract pinned reference
+        run: |
+          mkdir -p artifacts/reference
+          cd artifacts/reference
+          curl --fail --location --retry 3 --max-time 120 \
+            https://github.com/pingdotgg/t3code/releases/download/v0.1.11/T3-Code-x86_64.AppImage \
+            --output t3.AppImage
+          echo '8baa06a7bbaa3f729d69466fb211ed7006d6a6e4d800b9ecdacd831fd1686b14  t3.AppImage' | sha256sum --check
+          chmod u+x t3.AppImage
+          ./t3.AppImage --appimage-extract > /dev/null
+          # Extracting the bundle loses the privileged ownership required by
+          # Chromium's Linux sandbox helper. Restore it on the isolated runner.
+          sudo chown root:root squashfs-root/chrome-sandbox
+          sudo chmod 4755 squashfs-root/chrome-sandbox
+      - name: Capture both desktop windows
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          mkdir -p artifacts/ui-native
+          printf 'T3 Code v0.1.11 (59651c1761f6c63e9b6056839067066968e6a406)\nButler %s\n' \
+            "$GITHUB_SHA" > artifacts/ui-native/provenance.txt
+          xvfb-run -a -s '-screen 0 1440x900x24 -dpi 96 -nolisten tcp' \
+            scripts/capture-desktop-startup.sh artifacts/reference/squashfs-root \
+            target/debug/butler artifacts/ui-native
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-startup
+          path: artifacts/ui-native/
+          if-no-files-found: ignore
+          retention-days: 7
