@@ -64,6 +64,14 @@ When a gap affects Butler, record the Incular revision, platform or renderer if 
 
 **Butler effect / acceptance:** Transcript search can reveal the message and style the matching foreground, but cannot show T3's contrasting inline background through the standard span API. Render the background only for the styled glyph range, without altering text shaping, selection, or wrapping, including a match crossing a line wrap. No Butler workaround.
 
+### IG-009: Widget modifiers can be stale when no widget has focus
+
+**Status:** Runtime-verified on the pinned Incular input path. Flutter exposes held modifier state through the window's [HardwareKeyboard instance](https://api.flutter.dev/flutter/services/HardwareKeyboard-class.html), independent of the focus widget, so a tap callback can check whether Ctrl, Shift, Alt, or Meta is down. Incular's [tap details](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-gestures/src/details.rs#L214-L228) don't include modifiers. Its [ShortcutRegistry getter](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-widgets/src/shortcut_registry.rs#L190-L194) only sees keys sent to the [registrar's bubbling handler](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-widgets/src/shortcut_registry.rs#L314-L319), and [keyboard dispatch](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-widgets/src/tree/focus.rs#L120-L139) has no ancestor walk when nothing is focused.
+
+**Repro:** In a bare Incular application, wrap a pointer-activatable row in a keyed double-tap detector and install a `ShortcutRegistrar` above it. With no focus target selected, dispatch a ControlLeft key-down and two primary-mouse clicks (press/release at 0/24 ms and 84/116 ms). Both the ordinary activation and double-tap are received, but the registry still reports Control as up inside the tap callback. The unmodified control follows the same activation sequence.
+
+**Butler effect / acceptance:** T3 ignores modified double-clicks when entering Rename. Expose current hardware modifier state to widgets without requiring focus or keyboard bubbling, then verify that Ctrl, Shift, Alt and Meta can be distinguished from ordinary double-clicks, with correct clearing after release or window focus changes. Butler does not add a local key tracker or enable a rename gesture that would also fire on modified clicks.
+
 ## Investigations, not confirmed Incular gaps
 
 - Butler's compact scratch button clipped its label before switching from an outer width constraint to `ButtonStyle::fixed_size` ([native capture before the fix](https://github.com/Ferrb9579/butler/actions/runs/45329928604)). Reproduce the same widget constraints, font and padding in Flutter before blaming framework layout.
