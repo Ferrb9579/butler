@@ -65,7 +65,7 @@ capture_one() (
   xdotool windowmove "$window" 0 0 windowsize "$window" "$width" "$height"
   xdotool mousemove 1390 890
   sleep 3
-  if [[ "$name" == t3 || "$name" == t3-new-project-form || "$name" == butler ]]; then
+  if [[ "$name" == t3 || "$name" == t3-new-project-form || "$name" == t3-git-url-review || "$name" == butler ]]; then
     await_text "$window" "$out/$name-startup.png" 'Start without an agent' '240x42+270+601'
   elif [[ "$name" == butler-project-reopened ]]; then
     await_text "$window" "$out/$name-startup.png" 'ParityFixture'
@@ -119,6 +119,8 @@ capture_one() (
     fi
   elif [[ "$name" == t3-new-project-form ]]; then
     capture_reference_new_project_form "$window"
+  elif [[ "$name" == t3-git-url-review || "$name" == butler-git-url-review ]]; then
+    capture_git_url_review "$window" "${name%-git-url-review}" "$runtime"
   elif [[ "$name" == butler && "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
     # Coordinates refer to the fixed-size Welcome fixture captured above.
     # Check durable state and a rendered route, not only a successful X11 click.
@@ -516,6 +518,135 @@ verify_reference_new_project_form() {
   done
 }
 
+# Compare one recognized line literally. Tesseract sometimes inserts spaces
+# around URL punctuation, but case, slashes, the tilde and .git must all match.
+project_literal() {
+  local file=$1 crop=$2 expected=$3 psm=$4 recognized
+  recognized=$(
+    "${transform[@]}" "$file" -crop "$crop" +repage -resize 400% \
+      -colorspace gray -contrast-stretch 1%x1% png:- |
+      tesseract stdin stdout --psm "$psm" 2>/dev/null
+  ) || return 1
+  sed 's/[[:space:]]//g' <<<"$recognized" | grep -Fxq -- "$expected"
+}
+
+capture_git_url_review() {
+  local window=$1 app=$2 runtime=$3 tick coords x y
+  local url_input='ButlerFixture/CaseRepo'
+  local remote='https://github.com/ButlerFixture/CaseRepo.git'
+  local destination='~/CaseRepo'
+  local prefix="$out/$app-git-url-review"
+  # Both existing New project native frames use this input row. Limit clicks
+  # to the expected controls and their respective halves of the palette.
+  local input_crop='395x40+389+84' submit_crop='134x42+791+83'
+  local summary_crop='530x132+375+124' browse_crop='540x208+365+157'
+  if [[ "$app" == t3 ]]; then
+    click_project_control "$window" "$prefix-welcome.png" \
+      '240x42+270+601' 'Start without an agent' 7 || return 1
+  fi
+  click_project_control "$window" "$prefix-landing.png" \
+    '160x40+604+442' 'Add project' 7 || return 1
+  # The actual T3 and Butler Sources frames include a similarly described
+  # GitHub repository row. Match the plain Git URL control, not its neighbor.
+  click_project_control "$window" "$prefix-sources.png" \
+    '574x380+353+81' 'Git URL' 11 || return 1
+  click_project_control "$window" "$prefix-empty.png" \
+    "$input_crop" 'Enter Git clone URL' 7 || return 1
+  xdotool type --clearmodifiers "$url_input" || return 1
+  xdotool mousemove 1390 890 || return 1
+
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$prefix-typed.png" || return 1
+    coords=$(settings_phrase "$prefix-typed.png" "$submit_crop" 'Continue' 7) || coords=
+    if [[ -n "$coords" ]] && project_literal "$prefix-typed.png" "$input_crop" "$url_input" 7; then
+      break
+    fi
+    sleep 0.4
+  done
+  if (( tick == 15 )); then
+    printf '%s: did not verify the exact shorthand and Continue in the URL entry step\n' "$app" >&2
+    return 1
+  fi
+  rm -f -- "$prefix-typed-unverified"
+
+  # Pinned T3 CommandPalette.tsx:2191-2232 normalizes the plain URL and
+  # switches to confirm locally; provider lookup is a different branch.
+  # Its clone dispatch is only in the subsequent confirm step (:2278-2337).
+  # This is the ONLY click on the action accessory, after OCR says Continue.
+  read -r x y <<<"$coords"
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 || return 1
+  xdotool mousemove 1390 890 || return 1
+
+  # No more clicks or keys. Confirm the exact destination and normalized
+  # remote from the same image as the Repository/Select where to clone UI.
+  for ((tick=0; tick<15; tick++)); do
+    local frame="$prefix-destination.png"
+    "${capture[@]}" -window "$window" "$frame" || return 1
+    if project_literal "$frame" "$input_crop" "$destination" 7 &&
+       settings_phrase "$frame" "$submit_crop" 'Clone' 7 >/dev/null &&
+       settings_phrase "$frame" "$summary_crop" 'Repository' 11 >/dev/null &&
+       (project_literal "$frame" "$summary_crop" "$remote" 11 ||
+        project_literal "$frame" "$summary_crop" "$remote" 6) &&
+       settings_phrase "$frame" "$browse_crop" 'Select where to clone' 11 >/dev/null; then
+      break
+    fi
+    sleep 0.4
+  done
+  if (( tick == 15 )); then
+    printf '%s: did not verify %s and %s in the destination step\n' "$app" "$remote" "$destination" >&2
+    return 1
+  fi
+  if [[ -e "$HOME/CaseRepo" || -L "$HOME/CaseRepo" ||
+        -e "$runtime/state/butler/local-projects" ]] ||
+     compgen -G "$HOME/.butler-clone-*" >/dev/null; then
+    echo "$app: unexpected clone filesystem state; both frames are diagnostic only" >&2
+    touch "$prefix-typed-unverified"
+    return 1
+  fi
+  rm -f -- "$prefix-destination-unverified"
+}
+
+verify_git_url_review_pairs() {
+  local app name runtime binary rc state
+  local notes="$out/git-url-review-capture-notes.txt"
+  printf '%s\n' \
+    'Native Git URL review from fresh, separate X11 test profiles: ButlerFixture/CaseRepo.' \
+    'Expected normalized URL: https://github.com/ButlerFixture/CaseRepo.git; displayed draft destination: ~/CaseRepo.' \
+    'Continue was the last click. Clone was not clicked and no Enter was sent. T3 lists directories from its local test home.' \
+    'These frames verify local review, not clone execution or transport. See provenance.txt; unverified frames are diagnostic only.' \
+    >"$notes"
+  for app in t3 butler; do
+    name="$app-git-url-review"
+    runtime="$tmp/$name"
+    mkdir -p -m 700 "$runtime/home/FixtureFolder" "$runtime/state/butler"
+    touch "$out/$name-typed-unverified" "$out/$name-destination-unverified"
+    binary="$t3/AppRun"
+    if [[ "$app" == butler ]]; then
+      binary="$butler"
+      printf '%s\n' 'butler-onboarding-complete-v1' >"$runtime/state/butler/onboarding"
+    fi
+    set +e
+    HOME="$runtime/home" T3CODE_HOME="$runtime/t3-code" \
+      GIT_ALLOW_PROTOCOL= GIT_TERMINAL_PROMPT=0 capture_one "$name" "$binary"
+    rc=$?
+    set -e
+    if (( rc != 0 )); then
+      printf '%s: optional Git URL review incomplete; see unverified markers\n' "$app" | tee -a "$notes" >&2
+    fi
+  done
+  for state in typed destination; do
+    if [[ ! -e "$out/t3-git-url-review-$state-unverified" &&
+          ! -e "$out/butler-git-url-review-$state-unverified" ]] &&
+       compare_frames "t3-git-url-review-$state" "butler-git-url-review-$state" "git-url-review-$state"; then
+      rm -f -- "$out/git-url-review-$state-pair-unverified"
+      printf 'Git URL %s: verified route pair (raw diagnostic diff)\n' "$state" | tee -a "$notes"
+    else
+      touch "$out/git-url-review-$state-pair-unverified"
+      printf 'Git URL %s: optional pair not verified\n' "$state" | tee -a "$notes" >&2
+    fi
+  done
+}
+
 set +e
 capture_one t3 "$t3/AppRun"
 reference_rc=$?
@@ -598,4 +729,7 @@ if [[ "${VERIFY_BUTLER_NEW_PROJECT:-0}" == 1 ]]; then
 fi
 if [[ "${CAPTURE_T3_NEW_PROJECT_FORM:-0}" == 1 ]]; then
   verify_reference_new_project_form
+fi
+if [[ "${CAPTURE_GIT_URL_REVIEW:-0}" == 1 ]]; then
+  verify_git_url_review_pairs
 fi

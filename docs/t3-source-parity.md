@@ -118,5 +118,8 @@ accepts only default-port public GitHub/GitLab HTTPS with a trusted system
 Git, requires an existing owned destination parent and an explicit Clone
 activation, and registers only a completed no-replace checkout. That
 registration order intentionally differs from T3's provisional registry.
-Folder browsing, Create & Clone, SSH/authenticated hosts, cancellation,
-and UI shortcuts beyond the implemented controls remain open.
+The review browses existing parent and child folders while preserving the
+suggested repository leaf. Create & Clone for missing parents,
+SSH/authenticated hosts, cancellation, and the rest of the reference keyboard
+navigation remain open. The New project, Local folder, and Git URL glyphs
+use the original pinned Lucide 0.564.0 geometry (cubic paths for arcs).

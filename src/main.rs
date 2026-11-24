@@ -766,7 +766,9 @@ mod ui_tests {
         let tmp = Fixture::new();
         let state = tmp.0.join("profile");
         Profile::new(&state).complete_onboarding().unwrap();
-        let repo = tmp.0.join("CaseRepo");
+        let selected_parent = tmp.0.join("Choose here");
+        fs::create_dir(&selected_parent).unwrap();
+        let repo = selected_parent.join("CaseRepo");
         let repo_before_confirm = repo.clone();
         let state_before_confirm = state.clone();
         let mut app = application_with_transport(
@@ -783,6 +785,7 @@ mod ui_tests {
             sim.type_text("ButlerFixture/CaseRepo").unwrap();
             sim.press("Enter".parse().unwrap()).unwrap();
             sim.focus("Enter path (e.g. ~/projects/my-app)").unwrap();
+            sim.click("Choose here").unwrap();
             assert!(!repo_before_confirm.exists());
             assert!(
                 LocalProjects::new(&state_before_confirm)

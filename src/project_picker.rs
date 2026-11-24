@@ -13,7 +13,10 @@ use butler::{
     projects::FolderListing,
     remote_projects::{self, RemoteProject},
 };
-use std::{path::PathBuf, rc::Rc};
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, label, space};
 
@@ -44,6 +47,8 @@ pub struct RemoteFlow {
     destination_text: Signal<String>,
     candidate: Signal<Option<RemoteProject>>,
     error: Signal<Option<String>>,
+    browse: Signal<Option<FolderListing>>,
+    browse_error: Signal<Option<String>>,
 }
 
 impl RemoteFlow {
@@ -55,6 +60,8 @@ impl RemoteFlow {
             destination_text: Signal::new(String::new()),
             candidate: Signal::new(None),
             error: Signal::new(None),
+            browse: Signal::new(None),
+            browse_error: Signal::new(None),
         }
     }
 
@@ -65,9 +72,11 @@ impl RemoteFlow {
         self.destination_text.set(String::new());
         self.candidate.set(None);
         self.error.set(None);
+        self.browse.set(None);
+        self.browse_error.set(None);
     }
 
-    fn continue_to_destination(&self, input: &str, step: &Signal<Picker>) {
+    fn continue_to_destination(&self, input: &str, step: &Signal<Picker>, home: Option<&Path>) {
         let result = remote_projects::parse(input).and_then(|candidate| {
             clone_runner::validate_url(&candidate.url)?;
             Ok(candidate)
@@ -78,12 +87,59 @@ impl RemoteFlow {
                 self.set_destination(suggestion);
                 self.candidate.set(Some(candidate));
                 self.error.set(None);
+                if let Some(home) = home {
+                    self.load_parent(home, false);
+                }
                 step.set(Picker::CloneDestination);
             }
             Err(error) => {
                 self.candidate.set(None);
                 self.error.set(Some(error.to_string()));
             }
+        }
+    }
+
+    fn load_parent(&self, directory: &Path, update_destination: bool) {
+        match FolderListing::read(directory) {
+            Ok(list) => {
+                if update_destination && let Some(candidate) = self.candidate.get() {
+                    let path = if list.directory.file_name() == Some(candidate.leaf.as_ref()) {
+                        list.directory.clone()
+                    } else {
+                        list.directory.join(&candidate.leaf)
+                    };
+                    self.set_destination(path.to_string_lossy().into_owned());
+                }
+                self.browse_error.set(None);
+                self.browse.set(Some(list));
+            }
+            Err(error) => {
+                self.browse_error
+                    .set(Some(format!("Could not browse folder: {error}")));
+            }
+        }
+    }
+
+    fn browse_action(&self, name: &str, directory: PathBuf, busy: bool) -> Widget {
+        let remote = self.clone();
+        let surface = ActionSurface::with_child(row(
+            32.0,
+            Row::new(vec![
+                icon("palette-folder-plus", 16.0, MUTED),
+                label(name, 14.0, FontWeight::W400, INK),
+            ])
+            .spacing(8.0)
+            .cross_axis_alignment(CrossAxisAlignment::Center),
+        ))
+        .label(name)
+        .size(Size::new(574.0, 32.0))
+        .hover_color(Color::rgba(241, 241, 244, 255));
+        if busy {
+            surface.into()
+        } else {
+            surface
+                .on_press(move || remote.load_parent(&directory, true))
+                .into()
         }
     }
 
@@ -120,8 +176,9 @@ pub fn overlay(
         let enabled = !remote.url_text.get().trim().is_empty();
         let remote = remote.clone();
         let section = step.clone();
+        let browse_home = home.clone();
         palette_submit("Continue", "Continue (Enter)", enabled, move || {
-            remote.continue_to_destination(&remote.url.text(), &section);
+            remote.continue_to_destination(&remote.url.text(), &section, browse_home.as_deref());
         })
     } else if current == Picker::CloneDestination {
         let pending = remote.candidate.get();
@@ -219,6 +276,7 @@ pub fn overlay(
                 let edit = remote.clone();
                 let review = remote.clone();
                 let step = step.clone();
+                let browse_home = home.clone();
                 Expanded::new(
                     EditableText::new(remote.url.clone())
                         .placeholder("Enter Git clone URL")
@@ -230,7 +288,11 @@ pub fn overlay(
                         })
                         .on_submit(move |value| {
                             if !value.trim().is_empty() {
-                                review.continue_to_destination(&value, &step);
+                                review.continue_to_destination(
+                                    &value,
+                                    &step,
+                                    browse_home.as_deref(),
+                                );
                             }
                         }),
                 )
@@ -293,7 +355,7 @@ pub fn overlay(
             let create_source = row(
                 48.0,
                 source(
-                    "＋",
+                    "palette-folder-git",
                     "New project",
                     "Start a new Git repository from a name",
                     project_data.is_some(),
@@ -321,7 +383,12 @@ pub fn overlay(
             rows.push(
                 ActionSurface::with_child(row(
                     48.0,
-                    source("⊞", "Local folder", "Browse a folder on disk", true),
+                    source(
+                        "palette-folder-plus",
+                        "Local folder",
+                        "Browse a folder on disk",
+                        true,
+                    ),
                 ))
                 .label("Local folder")
                 .size(Size::new(574.0, 48.0))
@@ -344,7 +411,7 @@ pub fn overlay(
             let git_source = row(
                 48.0,
                 source(
-                    "↗",
+                    "palette-link",
                     "Git URL",
                     "Clone from a remote URL",
                     project_data.is_some(),
@@ -469,7 +536,7 @@ pub fn overlay(
             rows.push(row(
                 52.0,
                 source(
-                    "＋",
+                    "palette-folder-git",
                     if name.trim().is_empty() {
                         "New project"
                     } else {
@@ -484,7 +551,7 @@ pub fn overlay(
                 ActionSurface::with_child(row(
                     48.0,
                     source(
-                        "↪",
+                        "palette-folder-plus",
                         "Add existing project",
                         "Open a folder or clone a repository",
                         true,
@@ -545,13 +612,41 @@ pub fn overlay(
                 ));
                 rows.push(row(
                     48.0,
-                    source("↗", &candidate.input, &candidate.url, true),
+                    source("palette-link", &candidate.input, &candidate.url, true),
                 ));
             }
             rows.push(row(
                 28.0,
                 label("Select where to clone", 12.0, FontWeight::W500, MUTED),
             ));
+            if let Some(listing) = remote.browse.get() {
+                let mut choices = Vec::new();
+                if let Some(parent) = listing.directory.parent() {
+                    choices.push(remote.browse_action(
+                        "Parent directory",
+                        parent.to_owned(),
+                        creating,
+                    ));
+                }
+                for (name, path) in listing.children {
+                    choices.push(remote.browse_action(&name, path, creating));
+                }
+                if !choices.is_empty() {
+                    rows.push(
+                        Container::new()
+                            .height((choices.len() as f32 * 32.0).min(160.0))
+                            .child(SingleChildScrollView::new(
+                                Column::new(choices)
+                                    .main_axis_size(MainAxisSize::Min)
+                                    .cross_axis_alignment(CrossAxisAlignment::Stretch),
+                            ))
+                            .into(),
+                    );
+                }
+            }
+            if let Some(message) = remote.browse_error.get() {
+                rows.push(row(30.0, label(&message, 13.0, FontWeight::W400, MUTED)));
+            }
             rows.push(row(
                 48.0,
                 label(
@@ -702,7 +797,11 @@ fn source(icon_text: &str, title: &str, description: &str, ready: bool) -> Widge
         )
     };
     let mut items = vec![
-        label(icon_text, 16.0, FontWeight::W400, MUTED),
+        if icon_text.starts_with("palette-") {
+            icon(icon_text, 16.0, MUTED)
+        } else {
+            label(icon_text, 16.0, FontWeight::W400, MUTED)
+        },
         SizedBox::new().width(8.0).into(),
         Expanded::new(
             Column::new(vec![
