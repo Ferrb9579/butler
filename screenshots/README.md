@@ -52,3 +52,21 @@ buttons, shifted spacing, and native window controls mean it is not parity.
 [providers-run]: https://github.com/Ferrb9579/butler/actions/runs/45360893581
 [providers-inter]: https://github.com/Ferrb9579/butler/actions/runs/45359147124
 [providers-old]: https://github.com/Ferrb9579/butler/actions/runs/45354812510
+
+## About and Open source licenses (diagnostic pairs)
+
+| Screen | T3 Code | Butler | Raw differing pixels |
+| --- | --- | --- | --- |
+| About | [PNG](t3/about-fresh-light-1280x800.png) | [PNG](butler/about-fresh-light-1280x800.png) | 578,903 of 1,024,000 |
+| Open source licenses | [PNG](t3/open-source-licenses-fresh-light-1280x800.png) | [PNG](butler/open-source-licenses-fresh-light-1280x800.png) | 710,308 of 1,024,000 |
+
+[Native run 45365107987][about-run], fresh Linux X11 profiles, light theme,
+1280×800. T3 Code was v0.1.11
+(`59651c1761f6c63e9b6056839067066968e6a406`), Butler was
+`faf89de1e82ea383c244b5d43018b4bc02dba39a`. Both genuine apps show the same
+routes; neither pair is a parity pass. Butler's manifest covers its three
+bundled notices only; T3's inventory and scope/search controls differ.
+Butler's About also lacks updater and mobile controls. The images predate
+retaining the sidebar scroll position across Butler routes.
+
+[about-run]: https://github.com/Ferrb9579/butler/actions/runs/45365107987
