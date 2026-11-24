@@ -89,3 +89,19 @@ spacing, and underlying window chrome. These are genuine route pairs,
 not a pixel parity pass.
 
 [new-project-run]: https://github.com/Ferrb9579/butler/actions/runs/45368061459
+
+## Git URL entry (diagnostic pair)
+
+- [T3 Code](t3/git-url-typed-light-1280x800.png) · [Butler](butler/git-url-typed-light-1280x800.png)
+- [Native run 45374623866][git-url-run] captured both real apps after typing
+  `ButlerFixture/CaseRepo` in Git URL on separate fresh Linux X11 profiles,
+  at 1280×800 in the light theme. T3 Code was the pinned v0.1.11
+  (`59651c1761f6c63e9b6056839067066968e6a406`); Butler was
+  `cc9de3c3aa6c2aa1f2da926ea765dbb51f459828`.
+- Raw differing pixels: 417,974 of 1,024,000. Footer controls, dimensions
+  and window chrome still differ. This is not a pixel-parity pass.
+- The fixture stopped before Clone and never contacted a Git remote. The
+  destination frames in this run were diagnostics; only the typed pair
+  passed automated verification in both apps.
+
+[git-url-run]: https://github.com/Ferrb9579/butler/actions/runs/45374623866
