@@ -221,8 +221,11 @@ follows the relevant key groups in `CommandPaletteContent.tsx:94–126`,
 groups, 12px between groups and a 16px inset. With the URL field focused,
 Enter reviews an eligible URL, Backspace returns to Sources only when the
 field was already empty, and Escape closes. The existing pointer Close also
-remains available. Directional result navigation is not advertised; raw
-input autofocus, modal focus and composing Enter remain governed by
+remains available. The ordinary empty and typed entry screens use the
+40px + 20px + 40px no-results body from `CommandPaletteResults.tsx:40–48,121–123`,
+not the padded results list. The footer starts at y229 at 1280×800; the
+separate validation error row remains. Directional result navigation is
+not advertised; raw input autofocus, modal focus and composing Enter remain governed by
 IG-001, IG-004 and IG-007.
 
 This first safe clone path

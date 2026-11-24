@@ -1322,54 +1322,68 @@ mod ui_tests {
         use incular::core::Transform;
         use incular::rendering::{Brush, PaintCommand};
         let window = app.active_window_ids()[0];
-        app.process_runtime_work();
-        let (display, _) = app
-            .run_window_frame_at(
-                window,
-                Constraints::tight(Size::new(1280.0, 800.0)),
-                std::time::Instant::now(),
-            )
-            .unwrap()
-            .unwrap();
-        let mut transforms = vec![Transform::IDENTITY];
-        let mut footer = None;
-        let mut keys = Vec::new();
-        for command in display.commands() {
-            match command {
-                PaintCommand::PushTransform { transform } => {
-                    transforms.push(transforms.last().unwrap().then(*transform));
-                }
-                PaintCommand::PopTransform => {
-                    transforms.pop();
-                }
-                PaintCommand::RRect {
-                    rrect,
-                    brush: Brush::Solid(color),
-                } => {
-                    let top_left = transforms
-                        .last()
-                        .unwrap()
-                        .transform_point(rrect.rect.origin);
-                    if *color == Color::rgba(24, 24, 27, 6) {
-                        footer = Some((top_left, rrect.rect.size));
-                    } else if *color == Color::rgba(24, 24, 27, 20) {
-                        keys.push((top_left, rrect.rect.size));
+        let assert_footer = |app: &mut Application| {
+            app.process_runtime_work();
+            let (display, _) = app
+                .run_window_frame_at(
+                    window,
+                    Constraints::tight(Size::new(1280.0, 800.0)),
+                    std::time::Instant::now(),
+                )
+                .unwrap()
+                .unwrap();
+            let mut transforms = vec![Transform::IDENTITY];
+            let mut footer = None;
+            let mut keys = Vec::new();
+            let mut rules = Vec::new();
+            for command in display.commands() {
+                match command {
+                    PaintCommand::PushTransform { transform } => {
+                        transforms.push(transforms.last().unwrap().then(*transform));
                     }
+                    PaintCommand::PopTransform => {
+                        transforms.pop();
+                    }
+                    PaintCommand::Rect { rect, color } if *color == Color::rgba(24, 24, 27, 18) => {
+                        rules.push((
+                            transforms.last().unwrap().transform_point(rect.origin),
+                            rect.size,
+                        ));
+                    }
+                    PaintCommand::RRect {
+                        rrect,
+                        brush: Brush::Solid(color),
+                    } => {
+                        let top_left = transforms
+                            .last()
+                            .unwrap()
+                            .transform_point(rrect.rect.origin);
+                        if *color == Color::rgba(24, 24, 27, 6) {
+                            footer = Some((top_left, rrect.rect.size));
+                        } else if *color == Color::rgba(24, 24, 27, 18) {
+                            rules.push((top_left, rrect.rect.size));
+                        } else if *color == Color::rgba(24, 24, 27, 20) {
+                            keys.push((top_left, rrect.rect.size));
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
-        let (origin, size) = footer.expect("Git URL footer drawn");
-        assert_eq!(size, Size::new(574.0, 41.0));
-        // Include footer descendants only; the application can paint the
-        // same alpha elsewhere (e.g. in the header or background).
-        keys.retain(|(point, _)| point.y == origin.y + 11.0);
-        keys.sort_by(|left, right| left.0.x.total_cmp(&right.0.x));
-        assert_eq!(keys.len(), 3, "Continue, Back and Close keycaps only");
-        assert_eq!(keys[0].0.x, origin.x + 16.0);
-        assert!(keys.iter().all(|(_, size)| size.height == 20.0));
-        assert!(keys[1].1.width > keys[0].1.width);
-        assert!(keys[2].1.width < keys[0].1.width);
+            let (origin, size) = footer.expect("Git URL footer drawn");
+            assert_eq!(origin, Offset::new(353.0, 229.0));
+            assert_eq!(size, Size::new(574.0, 41.0));
+            assert!(rules.contains(&(origin, Size::new(574.0, 1.0))));
+            // Include footer descendants only; the application can paint the
+            // same alpha elsewhere (e.g. in the header or background).
+            keys.retain(|(point, _)| point.y == origin.y + 11.0);
+            keys.sort_by(|left, right| left.0.x.total_cmp(&right.0.x));
+            assert_eq!(keys.len(), 3, "Continue, Back and Close keycaps only");
+            assert_eq!(keys[0].0.x, origin.x + 16.0);
+            assert!(keys.iter().all(|(_, size)| size.height == 20.0));
+            assert!(keys[1].1.width > keys[0].1.width);
+            assert!(keys[2].1.width < keys[0].1.width);
+        };
+        assert_footer(&mut app);
 
         interact(&mut app, |sim| {
             sim.focus("Enter Git clone URL").unwrap();
@@ -1397,6 +1411,9 @@ mod ui_tests {
             sim.click("Git URL").unwrap();
             sim.type_into("Enter Git clone URL", "ButlerFixture/CaseRepo")
                 .unwrap();
+        });
+        assert_footer(&mut app);
+        interact(&mut app, |sim| {
             sim.press(Code::Enter).unwrap();
             sim.focus("Enter path (e.g. ~/projects/my-app)").unwrap();
         });

@@ -658,16 +658,20 @@ pub fn overlay(
             }
         }
         Picker::RemoteUrl => {
+            // The reference no-results state is a 20px line with 40px
+            // above and below. It does not mount the padded results list.
             rows.push(
                 Container::new()
-                    .height(96.0)
+                    .height(100.0)
                     .alignment(Alignment::CENTER)
-                    .child(label(
-                        "Enter a Git clone URL and press Enter to continue.",
-                        14.0,
-                        FontWeight::W400,
-                        MUTED,
-                    ))
+                    .child(
+                        Text::new("Enter a Git clone URL and press Enter to continue.").style(
+                            crate::typography::interface()
+                                .font_size(14.0)
+                                .line_height_absolute(20.0)
+                                .color(MUTED),
+                        ),
+                    )
                     .into(),
             );
             if let Some(error) = remote.error.get() {
@@ -868,7 +872,7 @@ pub fn overlay(
             }),
         )
     };
-    if current != Picker::New {
+    if !matches!(current, Picker::New | Picker::RemoteUrl) {
         rows.push(space(16.0));
     }
     if current != Picker::RemoteUrl {
