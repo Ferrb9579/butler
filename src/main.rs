@@ -9,6 +9,7 @@ mod project_picker;
 mod provider_settings;
 mod settings_icons;
 mod sidebar_search;
+mod thread_details;
 mod thread_find;
 mod thread_find_bar;
 mod thread_title;
@@ -113,6 +114,7 @@ fn application_with_transport(
     let posted_message_jump = Cell::new(None);
     let thread_find_input = TextEditingController::new();
     let thread_title_editor = thread_title::Editor::default();
+    let details_visibility = thread_details::Visibility::default();
     let picker_error = Signal::new(
         saved_project
             .err()
@@ -216,6 +218,30 @@ fn application_with_transport(
                 let rename_on_new = thread_title_editor.clone();
                 let rename_here = thread_title_editor.clone();
                 let current = selected_thread.get();
+                let viewport = cx.viewport();
+                let details = current.as_ref().and_then(|turn| {
+                    let Workspace::Local(path) = &turn.workspace else {
+                        return None;
+                    };
+                    Some(thread_details::LocalDetails {
+                        thread: turn.id,
+                        machine: device.clone(),
+                        path: path.clone(),
+                        canvas_height: (viewport.height - 40.0).max(0.0),
+                        inline_open: details_visibility.is_open(turn.id),
+                        visibility: details_visibility.clone(),
+                    })
+                });
+                let shortcut_details = details.clone().filter(|detail| {
+                    let width = viewport.width - 256.0;
+                    thread_details::inline_layout(
+                        width,
+                        detail.canvas_height,
+                        48.0,
+                        message_jump.get().is_some(),
+                    )
+                    .is_some()
+                });
                 let jump = message_jump
                     .get()
                     .filter(|jump| current.as_ref().is_some_and(|turn| turn.id == jump.thread));
@@ -279,6 +305,7 @@ fn application_with_transport(
                     }
                 });
                 let menu_find = open_find.clone();
+                let panel_settings = settings_open.clone();
                 let workspace = workspace::draft(
                     title,
                     project_icon,
@@ -289,6 +316,7 @@ fn application_with_transport(
                     message_jump.clone(),
                     thread_find_input.clone(),
                     thread_title_editor.clone(),
+                    details,
                     move |id, title| {
                         let active_scope = rename_project
                             .get()
@@ -414,13 +442,35 @@ fn application_with_transport(
                     } else {
                         Modifiers::CONTROL
                     };
-                    CallbackShortcuts::new(workspace)
-                        .shortcut(
-                            SingleActivator::new(KeyboardKey::Character("f".into()), modifiers)
+                    let mut shortcuts = CallbackShortcuts::new(workspace).shortcut(
+                        SingleActivator::new(KeyboardKey::Character("f".into()), modifiers)
+                            .with_repeats(false),
+                        move || open_find(),
+                    );
+                    if let Some(detail) = shortcut_details {
+                        let picker = picker.clone();
+                        let selection = selected_thread.clone();
+                        let toggle = Rc::new(move || {
+                            if !panel_settings.get()
+                                && picker.get() == Picker::Closed
+                                && selection.get().is_some_and(|turn| turn.id == detail.thread)
+                            {
+                                detail.toggle();
+                            }
+                        });
+                        for character in ["b", "B"] {
+                            let toggle = toggle.clone();
+                            shortcuts = shortcuts.shortcut(
+                                SingleActivator::new(
+                                    KeyboardKey::Character(character.into()),
+                                    modifiers | Modifiers::SHIFT,
+                                )
                                 .with_repeats(false),
-                            move || open_find(),
-                        )
-                        .into()
+                                move || toggle(),
+                            );
+                        }
+                    }
+                    shortcuts.into()
                 } else {
                     workspace
                 }
@@ -1734,6 +1784,136 @@ mod ui_tests {
         );
         assert_eq!(fs::read(with.join("favicon.png")).unwrap(), source);
         assert_eq!(fs::read_dir(without).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn local_thread_details_move_below_find_and_toggle_independently() {
+        use incular::rendering::PaintCommand;
+
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        let folder = tmp.0.join("Project in use");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("untouched.txt"), b"keep me").unwrap();
+        let project = LocalProjects::new(&profile).open(&folder).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let store = ThreadStore::new(&profile);
+        for prompt in ["First saved discussion", "Second saved discussion"] {
+            store
+                .save(&Conversation {
+                    id: uuid::Uuid::new_v4(),
+                    workspace: Workspace::Local(project.root.clone()),
+                    prompt: prompt.into(),
+                    reply: "An ordinary saved reply.".into(),
+                    follow_ups: Vec::new(),
+                })
+                .unwrap();
+        }
+        let mut app =
+            application(Some(profile), Some(tmp.0.clone()), "Local fixture".into()).unwrap();
+        let window = app.active_window_ids()[0];
+        let card = |app: &mut Application| {
+            app.process_runtime_work();
+            let (list, _) = app
+                .run_window_frame_at(
+                    window,
+                    Constraints::tight(Size::new(1280.0, 800.0)),
+                    std::time::Instant::now(),
+                )
+                .unwrap()
+                .unwrap();
+            let mut transforms = vec![AffineTransform::IDENTITY];
+            for command in list.commands() {
+                match command {
+                    PaintCommand::PushTransform { transform } => {
+                        transforms.push(transform.then(*transforms.last().unwrap()));
+                    }
+                    PaintCommand::PopTransform => {
+                        transforms.pop();
+                    }
+                    PaintCommand::RRect {
+                        rrect,
+                        brush: Brush::Solid(color),
+                    } if *color == Color::rgba(255, 255, 255, 213)
+                        && rrect.rect.size.width == 280.0
+                        && rrect.rect.size.height >= 50.0 =>
+                    {
+                        assert_eq!(rrect.radii.top_left, 16.0);
+                        return Some(
+                            transforms
+                                .last()
+                                .unwrap()
+                                .transform_point(rrect.rect.origin),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            None
+        };
+        interact(&mut app, |sim| {
+            sim.click("Open thread: First saved discussion").unwrap();
+            sim.focus(thread_details::TOGGLE).unwrap();
+        });
+        assert_eq!(card(&mut app), Some(Offset::new(988.0, 52.0)));
+        let details_semantics = std::sync::Arc::new(std::sync::Mutex::new((false, false)));
+        let observed = details_semantics.clone();
+        let expected_path = project.root.to_string_lossy().into_owned();
+        app.dispatch(move |runtime| {
+            let semantics = runtime.tree().semantics();
+            let mut pending = semantics.roots().to_vec();
+            while let Some(id) = pending.pop() {
+                let Some(node) = semantics.node(id) else {
+                    continue;
+                };
+                let mut observed = observed.lock().unwrap();
+                if node.label.as_deref() == Some("Run context: Local fixture, Local workspace") {
+                    observed.0 = node.state.tooltip.as_deref() == Some(expected_path.as_str());
+                }
+                if node.label.as_deref() == Some(thread_details::TOGGLE) {
+                    observed.1 = node.state.toggled == Some(true);
+                }
+                pending.extend(node.children.iter().copied());
+            }
+        });
+        app.process_runtime_work();
+        assert_eq!(*details_semantics.lock().unwrap(), (true, true));
+
+        interact(&mut app, |sim| {
+            sim.click("Thread actions for First saved discussion")
+                .unwrap();
+            sim.click("Find in thread").unwrap();
+            sim.focus("Find in thread").unwrap();
+        });
+        assert_eq!(card(&mut app), Some(Offset::new(988.0, 100.0)));
+        interact(&mut app, |sim| {
+            sim.click("Close thread find").unwrap();
+            sim.focus(thread_details::TOGGLE).unwrap();
+            let modi = if cfg!(target_os = "macos") {
+                Code::MetaLeft
+            } else {
+                Code::ControlLeft
+            };
+            sim.key_down(modi).unwrap();
+            sim.key_down(Code::ShiftLeft).unwrap();
+            sim.press_key(KeyboardKey::Character("B".into()), Code::KeyB)
+                .unwrap();
+            sim.key_up(Code::ShiftLeft).unwrap();
+            sim.key_up(modi).unwrap();
+        });
+        assert_eq!(card(&mut app), None);
+        interact(&mut app, |sim| {
+            sim.click("Open thread: Second saved discussion").unwrap()
+        });
+        assert_eq!(card(&mut app), Some(Offset::new(988.0, 52.0)));
+        interact(&mut app, |sim| {
+            sim.click("Open thread: First saved discussion").unwrap()
+        });
+        assert_eq!(card(&mut app), None);
+        interact(&mut app, |sim| sim.click(thread_details::TOGGLE).unwrap());
+        assert_eq!(card(&mut app), Some(Offset::new(988.0, 52.0)));
+        assert_eq!(fs::read(folder.join("untouched.txt")).unwrap(), b"keep me");
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 1);
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub fn draft(
     jump_state: Signal<Option<Jump>>,
     find_input: TextEditingController,
     title_editor: crate::thread_title::Editor,
+    details: Option<crate::thread_details::LocalDetails>,
     rename: impl Fn(uuid::Uuid, &str) + 'static,
     open_find: impl Fn() + 'static,
     history_error: Option<String>,
@@ -65,6 +66,8 @@ pub fn draft(
     } else {
         breadcrumb_text("New thread", INK)
     };
+    let details_header = details.clone();
+    let find_open = jump.is_some();
     let rendered_query = search.query();
     let sidebar_settings = open_settings.clone();
     let sidebar = Widget::stateful_builder(search.revision(), move |_| {
@@ -238,15 +241,25 @@ pub fn draft(
                     Widget::from(
                         Container::new()
                             .height(40.0)
-                            .padding(EdgeInsets::symmetric(20.0, 0.0))
+                            .padding(EdgeInsets::from_ltrb(20.0, 0.0, 12.0, 0.0))
                             .alignment(Alignment::CENTER_LEFT)
                             .child(LayoutBuilder::new(move |_, constraints| {
+                                let details = details_header.as_ref().filter(|detail| {
+                                    crate::thread_details::inline_layout(
+                                        constraints.max_width() + 32.0,
+                                        detail.canvas_height,
+                                        48.0,
+                                        find_open,
+                                    )
+                                    .is_some()
+                                });
                                 // Leave room for the divider, both gaps, and the
                                 // 40px minimum of the current-thread breadcrumb.
-                                let maximum = (constraints.max_width() - 72.0).max(0.0);
+                                let reserved = if details.is_some() { 112.0 } else { 72.0 };
+                                let maximum = (constraints.max_width() - reserved).max(0.0);
                                 let width = (20.0 + word_advance(&project_title)).min(maximum);
                                 let action = start_here.clone();
-                                Row::new(vec![
+                                let mut parts = vec![
                                     workspace_project(
                                         &project_title,
                                         header_icon.as_ref(),
@@ -256,10 +269,14 @@ pub fn draft(
                                     ),
                                     breadcrumb_text("/", MUTED),
                                     Expanded::new(active_header.clone()).into(),
-                                ])
-                                .spacing(12.0)
-                                .cross_axis_alignment(CrossAxisAlignment::Center)
-                                .into()
+                                ];
+                                if let Some(detail) = details {
+                                    parts.push(detail.toggle_button());
+                                }
+                                Row::new(parts)
+                                    .spacing(12.0)
+                                    .cross_axis_alignment(CrossAxisAlignment::Center)
+                                    .into()
                             })),
                     ),
                     Expanded::new(LayoutBuilder::new(move |_, constraints| {
@@ -268,9 +285,30 @@ pub fn draft(
                         let margin = if width >= 720.0 { 48.0 } else { 16.0 };
                         let composer_width = (width - 2.0 * margin).clamp(1.0, 652.0);
                         if let Some(turn) = selected.as_ref() {
+                            let details_layout = details.as_ref().and_then(|detail| {
+                                crate::thread_details::inline_layout(
+                                    width, height, margin, find_open,
+                                )
+                                .map(|placement| (detail, placement))
+                            });
+                            let (left, composer_width) =
+                                if let Some((detail, placement)) = details_layout {
+                                    let right = if detail.inline_open {
+                                        placement.lane_right
+                                    } else {
+                                        width - margin
+                                    };
+                                    let lane_width = (right - margin).clamp(1.0, 736.0);
+                                    let left = ((width - lane_width) / 2.0)
+                                        .min(right - lane_width)
+                                        .max(margin);
+                                    (left, lane_width)
+                                } else {
+                                    (margin, composer_width)
+                                };
                             let find_width = (width - 24.0).clamp(1.0, 280.0);
                             let top = if jump.is_some()
-                                && margin + composer_width > width - 12.0 - find_width
+                                && left + composer_width > width - 12.0 - find_width
                             {
                                 52.0_f32.min(height)
                             } else {
@@ -278,19 +316,35 @@ pub fn draft(
                             };
                             // Fix the lane's actual width rather than nesting a
                             // width request inside the tight full-pane Stack child.
+                            let body = transcript(
+                                turn,
+                                jump.as_ref(),
+                                composer_width,
+                                #[cfg(test)]
+                                offline.clone(),
+                            );
+                            let body = if let Some(detail) = &details {
+                                detail.visibility.content(body)
+                            } else {
+                                body
+                            };
                             let mut layers = vec![
-                                Positioned::new(transcript(
-                                    turn,
-                                    jump.as_ref(),
-                                    composer_width,
-                                    #[cfg(test)]
-                                    offline.clone(),
-                                ))
-                                .left(margin)
-                                .top(top)
-                                .bottom(0.0)
-                                .width(composer_width),
+                                Positioned::new(body)
+                                    .left(left)
+                                    .top(top)
+                                    .bottom(0.0)
+                                    .width(composer_width),
                             ];
+                            if let Some((detail, placement)) =
+                                details_layout.filter(|(detail, _)| detail.inline_open)
+                            {
+                                layers.push(
+                                    Positioned::new(detail.card())
+                                        .top(placement.top)
+                                        .right(placement.right)
+                                        .width(placement.width),
+                                );
+                            }
                             if let Some(jump) = &jump {
                                 layers.push(
                                     Positioned::new(find_bar(

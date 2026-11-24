@@ -53,6 +53,34 @@ Variable", "Segoe UI", system-ui, sans-serif` (`index.css:168–175` and
 The other script subsets, platform-specific font precedence, user typography
 controls, and text shaping/rendering comparisons are still unverified.
 
+## Saved transcript and Find
+
+- Pinned `components/chat/TimelineUserMessageRow.tsx` uses a right-aligned
+  plain-text bubble, at most 80% of the lane, with 12 px padding, 16 px corners
+  and stock-light `#ebebed`. The plain assistant row in
+  `components/chat/TimelineAssistantRows.tsx` is unfilled and inset 4 px
+  horizontally and 2 px vertically. Both translated body styles use 14 px
+  regular interface text and a 22.75 px line height.
+- The native saved-thread fixture has the same two synthetic messages in
+  both apps. The pinned reference shows them after dismissal of the stock
+  provider-status alert for that session only. Both apps passed second-match
+  navigation and the no-match state using the real Find bar. This does not
+  verify Markdown, rich attachments, providers, or the inline match
+  background blocked by IG-008. See the [capture provenance](../screenshots/README.md).
+
+### Saved local thread details
+
+- Pinned `threadDetailsCardLayout.ts` and `chatCanvasLayout.ts` place the
+  280 px inline card 12 px from the right and top, with a 32 px clear gap to
+  the conversation lane. `canvasStore.ts` shifts it down 48 px when Find is
+  open. The 1280×800 retained paint test checks the actual card at (988, 52)
+  and then (988, 100), not just the requested layout.
+- The first row shows the real local device and uses the canonical workspace
+  path for its tooltip. The pinned header toggle and Mod+Shift+B affect
+  only the selected saved thread. Closed state is session-local in Butler.
+  Narrow popovers, persistent visibility, copying the path, and the editor,
+  scripts, and Git rows are not part of this slice.
+
 ## Implementation boundary
 
 Butler owns its visual components. Do not enable or import Incular's stock
@@ -149,5 +177,5 @@ Sidebar search now adds message-only results after title matches, following
 `Sidebar.tsx:1365–1415`, `Sidebar.logic.ts:1101–1137` and the 120 ms debounce
 in `state/queries.ts:124–154`. It searches up to 50 recent saved threads in
 the current workspace, one file at a time, and shows one actual excerpt per
-thread. Older records, cross-project indexing and opening Find at the
-matched message are still unported.
+thread. Selecting a message result opens the saved thread and seeds Find at
+that message. Older records and cross-project indexing are still unported.

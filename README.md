@@ -42,3 +42,17 @@ source checkout above. Download the `native-startup` artifact for PNGs,
 pixel diff, app logs, and exact revisions. It uses clean profiles and records
 each app's default startup state. This is a diagnostic, not evidence that the
 two apps reached an equivalent fixture or passed UI parity.
+
+### Native saved-thread comparison
+
+The same workflow also checks the saved-thread Find fixture when the verified
+reference database is available. It opens the seeded thread in both native
+apps, confirms the two fixture messages, checks `release` at `1/2`, clicks
+Next to reach `2/2`, and checks `absent` at `0/0`. It only types into Find;
+it does not submit a message or configure a provider.
+
+The required startup job can pass while an optional Find state is unverified.
+Check the artifact's `thread-find-capture-notes.txt` and per-state
+`*-pair-unverified` markers before using the frames. The checked-in [original
+native comparisons](screenshots/README.md) list the exact build and capture
+run for each pair. They verify matched fixture states, not identical pixels.
