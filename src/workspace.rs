@@ -5,7 +5,11 @@ use incular::prelude::*;
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, label, sidebar, space};
 
-pub fn no_provider_draft(project: Option<String>) -> Widget {
+pub fn draft(
+    project: Option<String>,
+    open_settings: impl Fn() + Clone + 'static,
+    #[cfg(test)] offline: Option<OfflineDraft>,
+) -> Widget {
     let title = project.clone().unwrap_or_else(|| "No project".into());
     Row::new(vec![
         sidebar(project.as_deref(), None::<fn()>),
@@ -38,7 +42,12 @@ pub fn no_provider_draft(project: Option<String>) -> Widget {
                                     space(top),
                                     Container::new()
                                         .width(composer_width)
-                                        .child(composer(&title))
+                                        .child(composer(
+                                            &title,
+                                            open_settings.clone(),
+                                            #[cfg(test)]
+                                            offline.clone(),
+                                        ))
                                         .into(),
                                 ])
                                 .cross_axis_alignment(CrossAxisAlignment::Start),
@@ -56,7 +65,15 @@ pub fn no_provider_draft(project: Option<String>) -> Widget {
     .into()
 }
 
-fn composer(title: &str) -> Widget {
+fn composer(
+    title: &str,
+    open_settings: impl Fn() + 'static,
+    #[cfg(test)] offline: Option<OfflineDraft>,
+) -> Widget {
+    #[cfg(test)]
+    if let Some(offline) = offline {
+        return offline_composer(title, offline);
+    }
     Column::new(vec![
         centered("What should we work on?", 32.0, FontWeight::W400),
         space(10.0),
@@ -82,12 +99,8 @@ fn composer(title: &str) -> Widget {
                     Row::new(vec![
                         label("♧", 15.0, FontWeight::W400, MUTED),
                         Spacer::new().into(),
-                        label(
-                            "ⓘ Open provider settings       ♩     ↑",
-                            14.0,
-                            FontWeight::W400,
-                            MUTED,
-                        ),
+                        crate::provider_settings::action("Open provider settings", open_settings),
+                        label("♩     ↑", 14.0, FontWeight::W400, MUTED),
                     ])
                     .into(),
                 ])
@@ -108,5 +121,45 @@ fn centered(text: &str, size: f32, weight: FontWeight) -> Widget {
     Container::new()
         .alignment(Alignment::CENTER)
         .child(label(text, size, weight, INK))
+        .into()
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub struct OfflineDraft {
+    pub input: TextEditingController,
+    pub sent: Option<String>,
+    pub error: Option<String>,
+    pub send: std::rc::Rc<dyn Fn(String)>,
+}
+
+#[cfg(test)]
+fn offline_composer(title: &str, draft: OfflineDraft) -> Widget {
+    let mut rows = vec![
+        centered("What should we work on?", 32.0, FontWeight::W400),
+        centered(title, 14.0, FontWeight::W500),
+        space(20.0),
+    ];
+    if let Some(sent) = draft.sent {
+        rows.extend([
+            label(&sent, 14.0, FontWeight::W500, INK),
+            space(8.0),
+            label("Offline test reply received.", 14.0, FontWeight::W400, INK),
+        ]);
+    } else {
+        let control = draft.input.clone();
+        rows.extend([
+            EditableText::new(draft.input)
+                .placeholder("Ask anything")
+                .style(TextStyle::new().font_size(14.0).color(INK))
+                .into(),
+            crate::provider_settings::action("Send", move || (draft.send)(control.text())),
+        ]);
+    }
+    if let Some(error) = draft.error {
+        rows.push(label(&error, 14.0, FontWeight::W400, MUTED));
+    }
+    Column::new(rows)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .into()
 }

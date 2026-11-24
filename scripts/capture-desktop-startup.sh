@@ -102,6 +102,11 @@ capture_one() (
       xdotool windowfocus "$window" mousemove --window "$window" 828 462 click 1
       xdotool mousemove 1390 890
       assert_provider_gate "$window" "$out/t3-scratch-draft.png"
+      xdotool windowfocus "$window" mousemove --window "$window" 800 424 click 1
+      xdotool mousemove 1390 890
+      if ! await_text "$window" "$out/t3-provider-settings.png" 'Add provider|Refresh provider status'; then
+        touch "$out/t3-provider-settings-unverified"
+      fi
     else
       touch "$out/t3-landing-unverified"
     fi
@@ -124,6 +129,9 @@ capture_one() (
     verify_scratch_draft "$window" "$out/butler-after-welcome"
   elif [[ "$name" == butler-reopened ]]; then
     verify_scratch_draft "$window" "$out/butler-reopened"
+    xdotool windowfocus "$window" mousemove --window "$window" 800 424 click 1
+    xdotool mousemove 1390 890
+    await_text "$window" "$out/butler-provider-settings.png" 'No providers configured'
   elif [[ "$name" == butler-import ]]; then
     xdotool windowfocus "$window" mousemove --window "$window" 670 462 click 1
     xdotool mousemove 1390 890

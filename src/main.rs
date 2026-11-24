@@ -1,5 +1,6 @@
 mod empty_workspace;
 mod project_picker;
+mod provider_settings;
 mod welcome;
 mod workspace;
 
@@ -26,6 +27,11 @@ fn application(
     home: Option<PathBuf>,
     device: String,
 ) -> Result<Application, Box<dyn std::error::Error>> {
+    let settings_open = Signal::new(false);
+    #[cfg(test)]
+    let fixture_enabled = Signal::new(false);
+    #[cfg(test)]
+    let fixture = offline_fixture::Fixture::new(state.clone());
     let profile = state.as_ref().map(Profile::new);
     let projects = state.map(LocalProjects::new);
     let saved_project = projects.as_ref().map(LocalProjects::list).transpose();
@@ -91,11 +97,30 @@ fn application(
                     }
                 }
             })
+        } else if settings_open.get() {
+            let settings_open = settings_open.clone();
+            provider_settings::view(
+                move || {
+                    settings_open.set(false);
+                },
+                #[cfg(test)]
+                fixture_enabled.clone(),
+            )
         } else {
-            let workspace = if let Some(project) = active_project.get() {
-                workspace::no_provider_draft(Some(project.title()))
-            } else if scratch_open.get() {
-                workspace::no_provider_draft(None)
+            let project = active_project.get();
+            let workspace = if project.is_some() || scratch_open.get() {
+                let settings_open = settings_open.clone();
+                let title = project.as_ref().map(|project| project.title());
+                workspace::draft(
+                    title,
+                    move || {
+                        settings_open.set(true);
+                    },
+                    #[cfg(test)]
+                    fixture_enabled
+                        .get()
+                        .then(|| fixture.draft(project.map(|p| p.root))),
+                )
             } else {
                 match resolve_landing(&[], true, profile.is_some()) {
                     Landing::Empty {
@@ -190,6 +215,74 @@ fn machine_label() -> String {
 }
 
 #[cfg(test)]
+mod offline_fixture {
+    use super::*;
+    use butler::scratch::ScratchWorkspaces;
+    use std::{io, rc::Rc};
+    use uuid::Uuid;
+
+    pub struct Fixture {
+        root: Option<ScratchWorkspaces>,
+        thread: Uuid,
+        input: TextEditingController,
+        sent: Signal<Option<String>>,
+        error: Signal<Option<String>>,
+    }
+
+    impl Fixture {
+        pub fn new(state: Option<PathBuf>) -> Self {
+            Self {
+                root: state.map(ScratchWorkspaces::new),
+                thread: Uuid::new_v4(),
+                input: TextEditingController::new(),
+                sent: Signal::new(None),
+                error: Signal::new(None),
+            }
+        }
+
+        pub fn draft(&self, project: Option<PathBuf>) -> workspace::OfflineDraft {
+            let root = self.root.clone();
+            let thread = self.thread;
+            let sent = self.sent.clone();
+            let error = self.error.clone();
+            workspace::OfflineDraft {
+                input: self.input.clone(),
+                sent: sent.get(),
+                error: error.get(),
+                send: Rc::new(move |prompt| {
+                    if prompt.trim().is_empty() || sent.get().is_some() {
+                        return;
+                    }
+                    let result = if let Some(project) = &project {
+                        if project.is_dir() {
+                            Ok(project.clone())
+                        } else {
+                            Err(io::Error::new(
+                                io::ErrorKind::NotFound,
+                                "Project folder is missing.",
+                            ))
+                        }
+                    } else {
+                        root.as_ref()
+                            .ok_or_else(|| io::Error::other("No local profile."))
+                            .and_then(|root| root.prepare(thread, "2026-11-24", &prompt))
+                    };
+                    match result {
+                        Ok(_) => {
+                            error.set(None);
+                            sent.set(Some(prompt));
+                        }
+                        Err(problem) => {
+                            error.set(Some(problem.to_string()));
+                        }
+                    }
+                }),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod ui_tests {
     use super::*;
     use incular::testing::Simulation;
@@ -279,5 +372,35 @@ mod ui_tests {
         let projects = LocalProjects::new(profile).list().unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].root, root.canonicalize().unwrap());
+    }
+    #[test]
+    fn opens_provider_settings_then_tests_first_send_offline() {
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let mut app =
+            application(Some(profile.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open provider settings").unwrap();
+            sim.click("Enable offline test provider").unwrap();
+            sim.click("Back to workspace").unwrap();
+            assert!(sim.focus("Ask anything").is_ok());
+        });
+        assert!(!profile.join("scratch").exists());
+        interact(&mut app, |sim| {
+            sim.type_into("Ask anything", "Check my draft").unwrap();
+            sim.click("Send").unwrap();
+            sim.click("Offline test reply received.").unwrap();
+        });
+        let mut entries = fs::read_dir(profile.join("scratch")).unwrap();
+        let claimed = entries.next().unwrap().unwrap();
+        assert!(
+            claimed
+                .file_name()
+                .to_string_lossy()
+                .starts_with("2026-11-24-check-my-draft-")
+        );
+        assert!(entries.next().is_none());
     }
 }
