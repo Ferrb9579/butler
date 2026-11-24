@@ -3,6 +3,7 @@ mod empty_workspace;
 mod project_picker;
 mod provider_settings;
 mod settings_icons;
+mod sidebar_search;
 mod typography;
 mod ui;
 mod welcome;
@@ -113,6 +114,7 @@ fn application_with_transport(
     let new_project_preview = Signal::new(String::new());
     let remote_flow = RemoteFlow::new();
     let thread_projects = ThreadProjects::new();
+    let sidebar_search = sidebar_search::Search::new();
     let project_busy = Signal::new(false);
     let queued_project = Rc::new(RefCell::new(None::<ProjectWork>));
     let completed = profile
@@ -206,6 +208,7 @@ fn application_with_transport(
                     thread_history.get(),
                     selected_thread.get(),
                     history_error.get(),
+                    sidebar_search.clone(),
                     add_project,
                     move |id| {
                         let outcome = (|| {
@@ -306,6 +309,7 @@ fn application_with_transport(
             let thread_history = thread_history.clone();
             let history_error = history_error.clone();
             let selected_thread = selected_thread.clone();
+            let search_for_project = sidebar_search.clone();
             #[cfg(test)]
             let fixture_for_project = fixture.clone();
             let finish_project = move |result: std::io::Result<(LocalProject, Option<String>)>,
@@ -334,6 +338,7 @@ fn application_with_transport(
                         #[cfg(test)]
                         fixture_for_project.reset();
                         selected_thread.set(None);
+                        search_for_project.reset();
                         active_project.set(Some(project));
                         step.set(Picker::Closed);
                     }
@@ -934,6 +939,54 @@ mod ui_tests {
             sim.press("Escape".parse().unwrap()).unwrap();
             assert!(sim.focus("Project name").is_err());
             sim.focus("＋ Add project").unwrap();
+        });
+    }
+
+    #[test]
+    fn sidebar_search_filters_persisted_titles_and_wraps_keyboard_selection() {
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        let project = tmp.0.join("Project");
+        fs::create_dir(&project).unwrap();
+        let project = LocalProjects::new(&state).open(&project).unwrap();
+        Profile::new(&state).complete_onboarding().unwrap();
+        let store = ThreadStore::new(&state);
+        let workspace = Workspace::Local(project.root);
+        for title in ["Logger alpha", "Logger beta", "Other"] {
+            store
+                .save(&Conversation {
+                    id: uuid::Uuid::new_v4(),
+                    workspace: workspace.clone(),
+                    prompt: title.into(),
+                    reply: format!("{title} reply"),
+                    follow_ups: Vec::new(),
+                })
+                .unwrap();
+        }
+        let first = store
+            .history(&workspace)
+            .unwrap()
+            .into_iter()
+            .find(|thread| thread.title.starts_with("Logger"))
+            .unwrap()
+            .title;
+        let expected = format!("{first} reply");
+        let mut app = application(Some(state), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, move |sim| {
+            sim.focus("Search threads").unwrap();
+            sim.type_text("absent").unwrap();
+            sim.click("No threads found").unwrap();
+            sim.focus("Search threads").unwrap();
+            sim.press("Escape".parse().unwrap()).unwrap();
+            sim.focus("Open thread: Other").unwrap();
+            sim.focus("Search threads").unwrap();
+            sim.type_text("LOGGER").unwrap();
+            assert!(sim.focus("Open thread: Other").is_err());
+            sim.press("ArrowDown".parse().unwrap()).unwrap();
+            sim.press("ArrowDown".parse().unwrap()).unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.click(expected).unwrap();
+            sim.focus("Open thread: Other").unwrap();
         });
     }
 

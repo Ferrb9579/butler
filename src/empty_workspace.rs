@@ -54,7 +54,7 @@ pub fn view(
     ])
     .main_axis_size(MainAxisSize::Min);
     Row::new(vec![
-        sidebar(None, Some(open_project), None::<fn()>, Vec::new()),
+        sidebar(None, Some(open_project), None::<fn()>, None, Vec::new()),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
@@ -75,6 +75,7 @@ pub(crate) fn sidebar(
     project: Option<&str>,
     open_project: Option<impl Fn() + 'static>,
     new_thread: Option<impl Fn() + 'static>,
+    search_input: Option<Widget>,
     threads: Vec<Widget>,
 ) -> Widget {
     let empty_caption = project.unwrap_or(if open_project.is_some() {
@@ -117,8 +118,18 @@ pub(crate) fn sidebar(
         ),
         None => (None, None),
     };
+    let search_field = if let Some(field) = search_input {
+        Widget::from(
+            Container::new()
+                .height(48.0)
+                .alignment(Alignment::CENTER_LEFT)
+                .child(field),
+        )
+    } else {
+        line("⌕   Search", 48.0, MUTED)
+    };
     let search = if let Some(callback) = new_thread {
-        let mut controls = vec![Widget::from(Expanded::new(line("⌕   Search", 48.0, MUTED)))];
+        let mut controls = vec![Widget::from(Expanded::new(search_field))];
         controls.extend(header_add);
         controls.extend([
             Button::with_child("New thread", label("✎", 16.0, FontWeight::W500, MUTED))
@@ -136,7 +147,7 @@ pub(crate) fn sidebar(
             .cross_axis_alignment(CrossAxisAlignment::Center)
             .into()
     } else {
-        line("⌕   Search", 48.0, MUTED)
+        search_field
     };
     Container::new()
         .width(255.0)

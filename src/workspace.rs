@@ -1,6 +1,7 @@
 //! Draft immediately after "Start without a project" on a profile with no provider.
 //! Reference: T3 Code v0.1.11 desktop, native fixture 45329928604.
 
+use crate::sidebar_search::{self, Search};
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::threads::{Conversation, ThreadSummary};
 use incular::prelude::*;
@@ -12,36 +13,93 @@ pub fn draft(
     history: Vec<ThreadSummary>,
     selected: Option<Conversation>,
     history_error: Option<String>,
-    add_project: Option<impl Fn() + 'static>,
+    search: Search,
+    add_project: Option<impl Fn() + Clone + 'static>,
     open_thread: impl Fn(uuid::Uuid) + Clone + 'static,
-    new_thread: impl Fn() + 'static,
+    new_thread: impl Fn() + Clone + 'static,
     open_settings: impl Fn() + Clone + 'static,
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
     let title = project.clone().unwrap_or_else(|| "No project".into());
-    let mut threads = history
-        .into_iter()
-        .map(|thread| {
-            let open_thread = open_thread.clone();
-            Button::with_child(
-                format!("Open thread: {}", thread.title),
-                label(&thread.title, 13.0, FontWeight::W400, INK),
-            )
-            .style(
-                ButtonStyle::new()
-                    .variant(ButtonVariant::Ghost)
-                    .height(32.0)
-                    .background(PAGE)
-                    .padding(EdgeInsets::symmetric(16.0, 0.0))
-                    .alignment(Alignment::CENTER_LEFT),
-            )
-            .on_click(move || open_thread(thread.id))
-            .into()
-        })
-        .collect::<Vec<Widget>>();
-    if let Some(error) = history_error {
-        threads.push(label(&error, 12.0, FontWeight::W400, MUTED));
-    }
+    let sidebar = Widget::stateful_builder(search.revision(), move |_| {
+        let active = search.active();
+        let matching = if active {
+            sidebar_search::matching_threads(&history, &search.query())
+        } else {
+            history.iter().collect::<Vec<_>>()
+        };
+        let ids = matching.iter().map(|thread| thread.id).collect::<Vec<_>>();
+        let highlighted = if active {
+            search.highlighted(&ids)
+        } else {
+            None
+        };
+        let mut threads = matching
+            .into_iter()
+            .map(|thread| {
+                let id = thread.id;
+                let open_thread = open_thread.clone();
+                let clear = search.clone();
+                let content = if active {
+                    Widget::from(
+                        Text::new(&thread.title)
+                            .style(crate::typography::interface().font_size(14.0).color(INK))
+                            .max_lines(Some(1))
+                            .overflow(TextOverflow::Ellipsis),
+                    )
+                } else {
+                    label(&thread.title, 13.0, FontWeight::W400, INK)
+                };
+                let button = Button::with_child(format!("Open thread: {}", thread.title), content)
+                    .style(
+                        ButtonStyle::new()
+                            .variant(ButtonVariant::Ghost)
+                            .height(if active { 36.0 } else { 32.0 })
+                            .border_radius(6.0)
+                            .background(if highlighted == Some(id) {
+                                Color::rgba(236, 236, 239, 255)
+                            } else {
+                                PAGE
+                            })
+                            .padding(EdgeInsets::symmetric(if active { 10.0 } else { 16.0 }, 0.0))
+                            .alignment(Alignment::CENTER_LEFT),
+                    )
+                    .on_click(move || {
+                        clear.reset();
+                        open_thread(id);
+                    });
+                if active {
+                    let hover = search.clone();
+                    incular::widgets::MouseRegion::new(button)
+                        .opaque(false)
+                        .on_enter(move |_| hover.highlight(id))
+                        .into()
+                } else {
+                    button.into()
+                }
+            })
+            .collect::<Vec<Widget>>();
+        if active && threads.is_empty() {
+            threads.push(
+                Container::new()
+                    .padding(EdgeInsets::symmetric(8.0, 24.0))
+                    .alignment(Alignment::CENTER)
+                    .child(label("No threads found", 12.0, FontWeight::W400, MUTED))
+                    .into(),
+            );
+        }
+        if let Some(error) = &history_error {
+            threads.push(label(error, 12.0, FontWeight::W400, MUTED));
+        }
+        let choose_thread = open_thread.clone();
+        sidebar(
+            project.as_deref(),
+            add_project.clone(),
+            Some(new_thread.clone()),
+            Some(sidebar_search::field(search.clone(), ids, choose_thread)),
+            threads,
+        )
+    });
     let route_title = selected
         .as_ref()
         .and_then(|turn| turn.prompt.trim().lines().next())
@@ -50,7 +108,7 @@ pub fn draft(
         .take(72)
         .collect::<String>();
     Row::new(vec![
-        sidebar(project.as_deref(), add_project, Some(new_thread), threads),
+        sidebar,
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(

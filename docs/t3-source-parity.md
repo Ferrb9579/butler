@@ -136,3 +136,11 @@ starts a fresh draft and loads only that project's thread list. Cancelling
 or filtering leaves the active transcript and registry untouched. Butler's
 local recent-first ordering and simple title/path filtering are not the
 reference's general project search, fuzzy ranking, shortcuts, or device groups.
+
+The active sidebar now uses T3's inline Search threads control from
+`SidebarThreadHeader.tsx:61–99` and `Sidebar.tsx:1499–1537`: typed text
+filters persisted titles in the current workspace, with source-shaped
+case/accent folding, ranked title matches, stable ID highlight, wrapped
+arrows, Enter to open and Escape/clear to restore the list. Message bodies,
+branch and PR metadata, fuzzy usage ranking, and cross-project search
+remain unported. Search does not invoke a provider.
