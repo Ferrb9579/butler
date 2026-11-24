@@ -1,7 +1,7 @@
 //! Draft immediately after "Start without a project" on a profile with no provider.
 //! Reference: T3 Code v0.1.11 desktop, native fixture 45329928604.
 
-use butler::threads::{FirstTurn, ThreadSummary};
+use butler::threads::{Conversation, ThreadSummary};
 use incular::{
     controls::{Button, ButtonStyle, ButtonVariant},
     prelude::*,
@@ -12,7 +12,7 @@ use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, label, sidebar, spac
 pub fn draft(
     project: Option<String>,
     history: Vec<ThreadSummary>,
-    selected: Option<FirstTurn>,
+    selected: Option<Conversation>,
     history_error: Option<String>,
     open_thread: impl Fn(uuid::Uuid) + Clone + 'static,
     new_thread: impl Fn() + 'static,
@@ -73,6 +73,16 @@ pub fn draft(
                         let height = constraints.max_height();
                         let margin = if width >= 720.0 { 48.0 } else { 16.0 };
                         let composer_width = (width - 2.0 * margin).clamp(1.0, 652.0);
+                        if let Some(turn) = selected.as_ref() {
+                            return Container::new()
+                                .padding(EdgeInsets::symmetric(margin, 0.0))
+                                .child(Container::new().width(composer_width).child(transcript(
+                                    turn,
+                                    #[cfg(test)]
+                                    offline.clone(),
+                                )))
+                                .into();
+                        }
                         let top = (height * 0.28).max(28.0);
                         Container::new()
                             .padding(EdgeInsets::symmetric(margin, 0.0))
@@ -83,7 +93,6 @@ pub fn draft(
                                         .width(composer_width)
                                         .child(composer(
                                             &title,
-                                            selected.as_ref(),
                                             open_settings.clone(),
                                             #[cfg(test)]
                                             offline.clone(),
@@ -107,13 +116,9 @@ pub fn draft(
 
 fn composer(
     title: &str,
-    selected: Option<&FirstTurn>,
     open_settings: impl Fn() + 'static,
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
-    if let Some(turn) = selected {
-        return transcript(turn);
-    }
     #[cfg(test)]
     if let Some(offline) = offline {
         return offline_composer(title, offline);
@@ -199,17 +204,49 @@ fn offline_composer(title: &str, draft: OfflineDraft) -> Widget {
         .into()
 }
 
-fn transcript(turn: &FirstTurn) -> Widget {
-    Container::new()
-        .padding(EdgeInsets::all(16.0))
-        .child(
-            Column::new(vec![
-                label(&turn.prompt, 14.0, FontWeight::W500, INK),
-                space(12.0),
-                label(&turn.reply, 14.0, FontWeight::W400, INK),
-            ])
+fn transcript(turn: &Conversation, #[cfg(test)] offline: Option<OfflineDraft>) -> Widget {
+    let mut messages = Vec::new();
+    let pairs = std::iter::once((&turn.prompt, &turn.reply)).chain(
+        turn.follow_ups
+            .iter()
+            .map(|exchange| (&exchange.prompt, &exchange.reply)),
+    );
+    for (prompt, reply) in pairs {
+        messages.extend([
+            space(16.0),
+            label(prompt, 14.0, FontWeight::W500, INK),
+            space(12.0),
+            label(reply, 14.0, FontWeight::W400, INK),
+        ]);
+    }
+    let scroll = Expanded::new(SingleChildScrollView::new(
+        Column::new(messages)
             .main_axis_size(MainAxisSize::Min)
             .cross_axis_alignment(CrossAxisAlignment::Start),
-        )
+    ));
+    let rows = vec![Widget::from(scroll)];
+    #[cfg(test)]
+    let rows = if let Some(draft) = offline {
+        let mut rows = rows;
+        let control = draft.input.clone();
+        if let Some(error) = draft.error {
+            rows.push(label(&error, 14.0, FontWeight::W400, MUTED));
+        }
+        rows.extend([
+            EditableText::new(draft.input)
+                .placeholder("Follow up")
+                .style(TextStyle::new().font_size(14.0).color(INK))
+                .into(),
+            crate::provider_settings::action("Send follow-up", move || {
+                (draft.send)(control.text())
+            }),
+            space(12.0),
+        ]);
+        rows
+    } else {
+        rows
+    };
+    Column::new(rows)
+        .cross_axis_alignment(CrossAxisAlignment::Stretch)
         .into()
 }

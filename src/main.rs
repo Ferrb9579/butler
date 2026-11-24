@@ -9,7 +9,7 @@ use butler::{
     onboarding::{Route, StartupEvidence},
     profile::Profile,
     projects::{FolderListing, LocalProjects},
-    threads::{FirstTurn, ThreadStore, Workspace},
+    threads::{Conversation, ThreadStore, Workspace},
 };
 use incular::prelude::*;
 use project_picker::Picker;
@@ -60,7 +60,7 @@ fn application(
             .map(|e| format!("Could not read threads: {e}")),
     );
     let thread_history = Signal::new(initial_history.ok().flatten().unwrap_or_default());
-    let selected_thread = Signal::new(None::<FirstTurn>);
+    let selected_thread = Signal::new(None::<Conversation>);
     let picker_error = Signal::new(
         saved_project
             .err()
@@ -172,22 +172,26 @@ fn application(
                     },
                     #[cfg(test)]
                     fixture_enabled.get().then(|| {
-                        fixture.draft(project.map(|p| p.root), move |turn| {
-                            let refreshed = after_send_store
-                                .as_ref()
-                                .map(|store| store.history(&turn.workspace))
-                                .transpose();
-                            after_send_error.set(
-                                refreshed
+                        fixture.composer(
+                            project.map(|p| p.root),
+                            selected_thread.get(),
+                            move |turn| {
+                                let refreshed = after_send_store
                                     .as_ref()
-                                    .err()
-                                    .map(|e| format!("Could not read threads: {e}")),
-                            );
-                            if let Ok(Some(rows)) = refreshed {
-                                after_send_history.set(rows);
-                            }
-                            saved.set(Some(turn));
-                        })
+                                    .map(|store| store.history(&turn.workspace))
+                                    .transpose();
+                                after_send_error.set(
+                                    refreshed
+                                        .as_ref()
+                                        .err()
+                                        .map(|e| format!("Could not read threads: {e}")),
+                                );
+                                if let Ok(Some(rows)) = refreshed {
+                                    after_send_history.set(rows);
+                                }
+                                saved.set(Some(turn));
+                            },
+                        )
                     }),
                 )
             } else {
@@ -323,15 +327,22 @@ mod offline_fixture {
     use super::*;
     use butler::{
         scratch::ScratchWorkspaces,
-        threads::{FirstTurn, ThreadStore, Workspace},
+        threads::{Conversation, Exchange, ThreadStore, Workspace},
     };
-    use std::{io, rc::Rc};
+    use std::{cell::RefCell, collections::HashMap, io, rc::Rc};
     use uuid::Uuid;
 
     #[derive(Clone)]
     pub struct Fixture {
         state: Option<PathBuf>,
         thread: Signal<Uuid>,
+        input: TextEditingController,
+        error: Signal<Option<String>>,
+        follow_ups: Rc<RefCell<HashMap<Uuid, FollowUp>>>,
+    }
+
+    #[derive(Clone)]
+    struct FollowUp {
         input: TextEditingController,
         error: Signal<Option<String>>,
     }
@@ -343,6 +354,7 @@ mod offline_fixture {
                 thread: Signal::new(Uuid::new_v4()),
                 input: TextEditingController::new(),
                 error: Signal::new(None),
+                follow_ups: Rc::default(),
             }
         }
 
@@ -352,11 +364,58 @@ mod offline_fixture {
             self.error.set(None);
         }
 
-        pub fn draft(
+        pub fn composer(
             &self,
             project: Option<PathBuf>,
-            on_saved: impl Fn(FirstTurn) + 'static,
+            current: Option<Conversation>,
+            on_saved: impl Fn(Conversation) + 'static,
         ) -> workspace::OfflineDraft {
+            if let Some(current) = current {
+                let follow_up = self
+                    .follow_ups
+                    .borrow_mut()
+                    .entry(current.id)
+                    .or_insert_with(|| FollowUp {
+                        input: TextEditingController::new(),
+                        error: Signal::new(None),
+                    })
+                    .clone();
+                let state = self.state.clone();
+                return workspace::OfflineDraft {
+                    input: follow_up.input.clone(),
+                    error: follow_up.error.get(),
+                    send: Rc::new(move |prompt| {
+                        if prompt.trim().is_empty() {
+                            return;
+                        }
+                        let result = state
+                            .as_ref()
+                            .ok_or_else(|| io::Error::other("No local profile."))
+                            .and_then(|state| {
+                                ThreadStore::new(state).append(
+                                    &current,
+                                    Exchange {
+                                        prompt,
+                                        reply: format!(
+                                            "Offline follow-up {} received.",
+                                            current.follow_ups.len() + 1
+                                        ),
+                                    },
+                                )
+                            });
+                        match result {
+                            Ok(turn) => {
+                                follow_up.error.set(None);
+                                follow_up.input.clear();
+                                on_saved(turn);
+                            }
+                            Err(problem) => {
+                                follow_up.error.set(Some(problem.to_string()));
+                            }
+                        }
+                    }),
+                };
+            }
             let fixture = self.clone();
             let state = self.state.clone();
             let thread = self.thread.get();
@@ -382,11 +441,12 @@ mod offline_fixture {
                                 Workspace::Scratch
                             }
                         };
-                        let turn = FirstTurn {
+                        let turn = Conversation {
                             id: thread,
                             workspace: target,
                             prompt,
                             reply: "Offline test reply received.".into(),
+                            follow_ups: vec![],
                         };
                         ThreadStore::new(state).save(&turn)?;
                         Ok::<_, io::Error>(turn)
@@ -559,6 +619,38 @@ mod ui_tests {
         assert_eq!(history.len(), 2);
         assert_ne!(history[0].id, history[1].id);
         assert_eq!(fs::read_dir(profile.join("scratch")).unwrap().count(), 2);
+        interact(&mut app, |sim| {
+            sim.type_into("Follow up", "More about the second draft")
+                .unwrap();
+            sim.click("Open thread: Check my draft").unwrap();
+            sim.click("Send follow-up").unwrap(); // another thread must not receive unsent text
+            sim.click("Open thread: Check another draft").unwrap();
+            sim.click("Send follow-up").unwrap();
+            sim.click("More about the second draft").unwrap();
+            sim.click("Offline follow-up 1 received.").unwrap();
+        });
+        let threads = history
+            .iter()
+            .map(|item| store.load(item.id).unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            threads
+                .iter()
+                .find(|t| t.prompt == "Check my draft")
+                .unwrap()
+                .follow_ups
+                .is_empty()
+        );
+        assert_eq!(
+            threads
+                .iter()
+                .find(|t| t.prompt == "Check another draft")
+                .unwrap()
+                .follow_ups
+                .len(),
+            1
+        );
+        assert_eq!(fs::read_dir(profile.join("scratch")).unwrap().count(), 2);
         drop(app);
         let mut reopened =
             application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
@@ -569,6 +661,8 @@ mod ui_tests {
             sim.click("Offline test reply received.").unwrap();
             sim.click("Open thread: Check another draft").unwrap();
             sim.click("Check another draft").unwrap();
+            sim.click("More about the second draft").unwrap();
+            sim.click("Offline follow-up 1 received.").unwrap();
         });
     }
 }
