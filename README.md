@@ -68,3 +68,9 @@ local Git repository. It verifies that the actual named HEAD appears inside
 Details in both raw X11 frames, and checks a non-Git negative control. No
 Git action or provider is invoked. See `branch-details-capture-notes.txt`
 and `branch-details-pair-unverified` in the artifact before using the pair.
+
+The optional assistant paragraph fixture loads identical synthetic source in
+both apps. It checks visible paragraph spacing, `line continues` (`1/1`)
+across a soft line break, and `here. Second` (`0/0`) across the paragraph
+boundary. Review `markdown-find-capture-notes.txt` and
+`markdown-find-pair-unverified` before using these raw X11 comparisons.

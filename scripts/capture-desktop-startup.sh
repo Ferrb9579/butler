@@ -35,7 +35,8 @@ capture_one() (
   local runtime="$tmp/$profile" window="" tick dimensions ready="" window_pid window_xid=""
   local log="$out/$name.log"
   mkdir -p -m 700 "$runtime"/{config,cache,data,state,run}
-  if [[ "$name" == t3-thread-find || "$name" == t3-compact-details || "$name" == t3-branch-details ]]; then
+  if [[ "$name" == t3-thread-find || "$name" == t3-compact-details || "$name" == t3-branch-details ||
+        "$name" == t3-markdown-find ]]; then
     # The upstream release smoke launches the pinned executable directly and
     # opens the thread by its DOM row. Use that known-good navigation only
     # for this optional fixture, then keep the actual Electron window alive
@@ -46,6 +47,7 @@ capture_one() (
       "$t3" "$out/$name-renderer-diagnostic.json" "$ready" "$width" "$height" \
       "$out/$name-renderer-diagnostic.png"
     if [[ "$name" == t3-branch-details ]]; then set -- "$@" "$BRANCH_DETAILS_REF"; fi
+    if [[ "$name" == t3-markdown-find ]]; then set -- "$@" --markdown-fixture; fi
     # Do not upload raw helper or Chromium logs.
     log=/dev/null
   elif [[ "$name" == butler-compact-details ]]; then
@@ -102,7 +104,8 @@ capture_one() (
     await_new_project_workspace "$window" "$out/$name-startup.png"
   elif [[ "$name" == butler-thread-chooser ]]; then
     await_thread_draft "$window" "$out/$name-startup.png" 'Project Beta'
-  elif [[ "$name" == *-thread-find || "$name" == *-compact-details || "$name" == *-branch-details ]]; then
+  elif [[ "$name" == *-thread-find || "$name" == *-compact-details || "$name" == *-branch-details ||
+          "$name" == *-markdown-find ]]; then
     local thread_title='Release launch check'
     local thread_app=${name%%-*}
     if [[ "$thread_app" == butler ]]; then thread_title='Does the release open'; fi
@@ -213,6 +216,8 @@ capture_one() (
     capture_native_compact_details "$window" "$thread_app" "$thread_title"
   elif [[ "$name" == t3-branch-details || "$name" == butler-branch-details ]]; then
     capture_native_branch_details "$window" "$thread_app" "$thread_title" "$BRANCH_DETAILS_REF"
+  elif [[ "$name" == t3-markdown-find || "$name" == butler-markdown-find ]]; then
+    capture_native_markdown_find "$window" "$thread_app" "$thread_title"
   fi
 )
 
@@ -978,21 +983,22 @@ capture_native_thread_find() {
 
 seed_butler_thread_find() {
   local runtime=$1 profile=$1/state/butler project=${2:-$1/project}
+  local reply=${3:-The release opens and shows this thread.}
   local thread='a0142a87-8050-43fc-9d39-038947dff1aa'
   mkdir -p -m 700 "$profile/threads" "$project" || return 1
   printf '%s\n' 'butler-onboarding-complete-v1' >"$profile/onboarding" || return 1
   printf '%s\ntitle\t"Launch Check"\n' "$project" >"$profile/local-projects" || return 1
-  python3 - "$profile/threads/$thread.json" "$thread" "$project" <<'PY'
+  python3 - "$profile/threads/$thread.json" "$thread" "$project" "$reply" <<'PY'
 import json
 import pathlib
 import sys
 
-output, thread, project = sys.argv[1:]
+output, thread, project, reply = sys.argv[1:]
 pathlib.Path(output).write_text(json.dumps([2, {
     "id": thread,
     "workspace": {"Local": project},
     "prompt": "Does the release open?",
-    "reply": "The release opens and shows this thread.",
+    "reply": reply,
     "follow_ups": [],
 }]), encoding="utf-8")
 PY
@@ -1402,6 +1408,182 @@ verify_native_branch_details() {
   echo 'Branch details: verified same-fixture native route pair (raw diagnostic diff).' | tee -a "$notes"
 }
 
+set_t3_markdown_fixture_reply() {
+  python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import sqlite3
+import sys
+
+database, reply = sys.argv[1:]
+old = "The release opens and shows this thread."
+with sqlite3.connect(Path(database).resolve(strict=True).as_uri() + "?mode=rw", uri=True) as db:
+    # Exactly one assistant message, represented in five pinned copies.
+    # The renderer can hydrate text from messages; Find reads the turn item.
+    # The normal SQLite trigger refreshes its derived search index.
+    statements = (
+        ("UPDATE projection_thread_messages SET text = ? WHERE thread_id = 'launch-check-thread' "
+         "AND message_id = 'launch-check-assistant' AND role = 'assistant' AND text = ?"),
+        ("UPDATE orchestration_v2_projection_messages SET payload_json = json_set(payload_json, '$.text', ?) "
+         "WHERE thread_id = 'launch-check-thread' AND message_id = 'launch-check-assistant' "
+         "AND role = 'assistant' AND json_extract(payload_json, '$.text') = ?"),
+        ("UPDATE orchestration_v2_projection_turn_items SET payload_json = json_set(payload_json, '$.text', ?) "
+         "WHERE thread_id = 'launch-check-thread' AND turn_item_id = 'migration:v1:turn-item:launch-check-assistant' "
+         "AND type = 'assistant_message' AND json_extract(payload_json, '$.messageId') = 'launch-check-assistant' "
+         "AND json_extract(payload_json, '$.text') = ?"),
+        ("UPDATE orchestration_events SET payload_json = json_set(payload_json, '$.text', ?) "
+         "WHERE stream_id = 'launch-check-thread' AND application_event_version = 2 AND sequence = 8 "
+         "AND event_type = 'message.updated' AND json_extract(payload_json, '$.id') = 'launch-check-assistant' "
+         "AND json_extract(payload_json, '$.text') = ?"),
+        ("UPDATE orchestration_events SET payload_json = json_set(payload_json, '$.text', ?) "
+         "WHERE stream_id = 'launch-check-thread' AND application_event_version = 2 AND sequence = 9 "
+         "AND event_type = 'turn-item.updated' AND json_extract(payload_json, '$.messageId') = 'launch-check-assistant' "
+         "AND json_extract(payload_json, '$.text') = ?"),
+    )
+    for statement in statements:
+        if db.execute(statement, (reply, old)).rowcount != 1:
+            raise ValueError("Unexpected pinned assistant text; rolled back")
+PY
+}
+
+markdown_fixture_body() {
+  local app=$1 file=$2 phase=$3 channel=gray user_crop first second
+  local assistant_crop='373x136+296+104'
+  case "$app" in
+    t3)
+      user_crop='220x41+753+64'
+      if [[ "$phase" == find ]]; then channel=red; fi
+      ;;
+    butler) user_crop='220x42+753+60' ;;
+    *) return 1 ;;
+  esac
+  settings_phrase "$file" "$user_crop" 'Does the release open' 7 "$channel" >/dev/null || return 1
+  first=$(settings_phrase "$file" "$assistant_crop" 'Lead line continues here' 6 "$channel") || return 1
+  second=$(settings_phrase "$file" "$assistant_crop" 'Second paragraph stands apart' 6 "$channel") || return 1
+  # Two ~22.75px lines with a collapsed 10.4px paragraph gap. Allow only a
+  # few pixels for font raster bounds; a raw single/blank line won't pass.
+  (( ${second##* } - ${first##* } >= 29 && ${second##* } - ${first##* } <= 37 ))
+}
+
+markdown_fixture_count_label() {
+  local file=$1 count=$2 y=$3
+  if thread_find_count_label "$file" "$count" "$y"; then return 0; fi
+  # Tight 1/1 strokes can be read as a letter in normal language OCR.
+  # This fallback crops only the count, and still needs the exact digits
+  # and slash. Other Find tests retain their existing OCR unchanged.
+  "${transform[@]}" "$file" -crop "41x21+1147+$((y - 10))" +repage -resize 500% \
+    -colorspace gray -threshold 68% -bordercolor white -border 15 png:- |
+      tesseract stdin stdout --psm 7 -c 'tessedit_char_whitelist=0123456789/' 2>/dev/null |
+      grep -Fxq -- "$count"
+}
+
+await_markdown_fixture_frame() {
+  local window=$1 app=$2 title=$3 file=$4 query=${5:-} count=${6:-} anchor_y=${7:-0}
+  local tick coords y phase=transcript
+  local input="135x29+995+$((anchor_y - 14))"
+  if [[ -n "$query" ]]; then phase=find; fi
+  for ((tick=0; tick<16; tick++)); do
+    "${capture[@]}" -window "$window" "$file" || return 1
+    if [[ $("${identify[@]}" -format '%wx%h' "$file") == '1280x800' ]] &&
+       settings_phrase "$file" '228x29+406+5' "$title" 7 >/dev/null &&
+       markdown_fixture_body "$app" "$file" "$phase"; then
+      if [[ "$phase" == transcript ]]; then return 0; fi
+      coords=$(settings_phrase "$file" "$input" "${query//./}" 7) || coords=
+      if [[ -n "$coords" ]]; then
+        y=${coords##* }
+        if (( y >= anchor_y - 5 && y <= anchor_y + 5 )) &&
+           project_literal "$file" "$input" "${query// /}" 7 &&
+           markdown_fixture_count_label "$file" "$count" "$y"; then return 0; fi
+      fi
+    fi
+    sleep 0.25
+  done
+  printf '%s: native Markdown fixture phase %s not verified\n' "$app" "${query:-transcript}" >&2
+  return 1
+}
+
+capture_native_markdown_find() {
+  local window=$1 app=$2 title=$3 prefix="$out/$2-markdown-find" crop coords x y
+  if [[ "$app" == butler ]]; then
+    crop=$(thread_find_row_crop butler) || return 1
+    click_project_control "$window" "$prefix-thread-row.png" "$crop" "$title" 11 || return 1
+  fi
+  await_markdown_fixture_frame "$window" "$app" "$title" "$prefix-transcript.png" || return 1
+  if [[ "$app" == butler ]]; then xdotool windowfocus "$window" key Tab || return 1; fi
+  xdotool windowfocus "$window" key ctrl+f || return 1
+  coords=$(await_project_phrase "$window" "$prefix-open.png" '278x92+988+37' 'Find in thread' 11) || return 1
+  read -r x y <<<"$coords"
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 || return 1
+  xdotool type --clearmodifiers 'line continues' || return 1
+  xdotool mousemove 1390 890 || return 1
+  await_markdown_fixture_frame "$window" "$app" "$title" "$prefix-soft-break.png" 'line continues' '1/1' "$y" || return 1
+  # Focus only the already verified Find field. No clipboard paste or Return.
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 key ctrl+a || return 1
+  xdotool type --clearmodifiers 'here. Second' || return 1
+  xdotool mousemove 1390 890 || return 1
+  await_markdown_fixture_frame "$window" "$app" "$title" "$prefix-paragraph-boundary.png" 'here. Second' '0/0' "$y"
+}
+
+verify_native_markdown_find() {
+  local source=$1 app name runtime binary before after state rc
+  local reply=$'Lead line\ncontinues here.\n\nSecond paragraph stands apart.'
+  local fixture_sha='e65f15f89a847a264cf4366cd7bcdc31cef1d5fbfd07707ed497cc0f045357b5'
+  local notes="$out/markdown-find-capture-notes.txt"
+  touch "$out/t3-markdown-find-unverified" "$out/butler-markdown-find-unverified" \
+    "$out/markdown-find-pair-unverified" || return 1
+  printf '%s\n' \
+    'Optional raw X11 assistant Markdown: exactly the same synthetic reply in both disposable fixture profiles.' \
+    "Original pinned T3 v0.1.11 SQLite SHA256: $fixture_sha. Only one assistant message changes in the copy." \
+    'The source soft break visibly folds and Find crosses it (line continues 1/1). The paragraph boundary cannot match here. Second (0/0).' \
+    'Every verified frame retains the saved user message and two visibly separated assistant paragraphs.' \
+    'No provider, send, clipboard, or project action. See provenance.txt for versions.' >"$notes" || return 1
+  for app in t3 butler; do
+    local negative="$out/$app-thread-find-transcript.png"
+    if [[ ! -f "$negative" ]] || ! thread_find_transcript "$app" "$negative" ||
+       markdown_fixture_body "$app" "$negative" transcript; then
+      printf '%s: genuine unmodified transcript negative unavailable\n' "$app" | tee -a "$notes" >&2
+      continue
+    fi
+    name="$app-markdown-find"
+    runtime=$(realpath -m -- "$tmp/$name") || return 1
+    mkdir -p -m 700 "$runtime/home" || return 1
+    if [[ "$app" == t3 ]]; then
+      local db="$runtime/t3-code/userdata/statev2.sqlite"
+      if [[ ! -f "$source" || -e /tmp/t3-launch-check-workspace || -L /tmp/t3-launch-check-workspace ]] ||
+         ! mkdir -p -m 700 "$runtime/t3-code/userdata" || ! cp -- "$source" "$db" ||
+         ! printf '%s  %s\n' "$fixture_sha" "$db" | sha256sum --check --status ||
+         ! set_t3_markdown_fixture_reply "$db" "$reply"; then
+        echo 'Pinned T3 Markdown fixture missing or did not verify; not launched.' | tee -a "$notes" >&2
+        continue
+      fi
+      binary="$t3/t3code"
+    else
+      binary="$butler"
+      seed_butler_thread_find "$runtime" "$runtime/project" "$reply" || continue
+      before=$(butler_thread_find_snapshot "$runtime") || continue
+    fi
+    HOME="$runtime/home" T3CODE_HOME="$runtime/t3-code" T3CODE_TELEMETRY_ENABLED=false \
+      T3CODE_DISABLE_AUTO_UPDATE=true GIT_ALLOW_PROTOCOL= GIT_TERMINAL_PROMPT=0 \
+      CAPTURE_PROFILE="$name" capture_one "$name" "$binary"
+    rc=$?
+    if (( rc != 0 )); then
+      printf '%s: optional Markdown diagnostics incomplete; frames are unverified\n' "$app" | tee -a "$notes" >&2
+      continue
+    fi
+    if [[ "$app" == butler ]]; then
+      after=$(butler_thread_find_snapshot "$runtime") || continue
+      [[ "$before" == "$after" && ! -e "$runtime/state/butler/scratch" ]] || continue
+    fi
+    rm -f -- "$out/$name-unverified" || return 1
+    printf '%s: verified assistant paragraphs, visible soft-break Find, and absent paragraph-spanning match\n' "$app" | tee -a "$notes"
+  done
+  [[ ! -e "$out/t3-markdown-find-unverified" && ! -e "$out/butler-markdown-find-unverified" ]] || return 1
+  for state in transcript soft-break paragraph-boundary; do
+    compare_frames "t3-markdown-find-$state" "butler-markdown-find-$state" "markdown-find-$state" || return 1
+  done
+  rm -f -- "$out/markdown-find-pair-unverified" || return 1
+  echo 'Markdown Find: verified same-fixture raw native route pairs.' | tee -a "$notes"
+}
+
 set +e
 capture_one t3 "$t3/AppRun"
 reference_rc=$?
@@ -1518,5 +1700,14 @@ if [[ "${CAPTURE_BRANCH_DETAILS:-0}" == 1 ]]; then
   set -e
   if (( branch_rc != 0 )); then
     echo 'Optional native branch details did not complete; see unverified markers' >&2
+  fi
+fi
+if [[ "${CAPTURE_ASSISTANT_MARKDOWN:-0}" == 1 ]]; then
+  set +e
+  verify_native_markdown_find "${CAPTURE_THREAD_FIND_DB:-}"
+  markdown_rc=$?
+  set -e
+  if (( markdown_rc != 0 )); then
+    echo 'Optional native assistant Markdown did not complete; see unverified markers' >&2
   fi
 fi

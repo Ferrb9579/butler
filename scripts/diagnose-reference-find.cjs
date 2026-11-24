@@ -16,7 +16,8 @@ async function main() {
   const ready = process.argv[4];
   const size = { width: Number(process.argv[5]), height: Number(process.argv[6]) };
   const diagnosticPng = process.argv[7];
-  const branch = process.argv[8];
+  const markdown = process.argv[8] === "--markdown-fixture";
+  const branch = markdown ? undefined : process.argv[8];
   const failures = { page: 0, console: 0 };
   const report = (summary) => fs.writeFileSync(process.argv[3], JSON.stringify(summary) + "\n", {
     mode: 0o600,
@@ -68,7 +69,7 @@ async function main() {
     await thread.click({ timeout: 12_000 });
     stage = "transcript";
     const user = "Does the release open?";
-    const assistant = "The release opens and shows this thread.";
+    const assistant = markdown ? "Lead line continues here." : "The release opens and shows this thread.";
     const timeline = page.locator('[data-timeline-row-kind="message"]');
     await Promise.all([user, assistant].map((phrase) =>
       timeline.getByText(phrase, { exact: true })
@@ -154,6 +155,25 @@ async function main() {
       bannerDismissed = true;
     }
     const summary = await readTranscript();
+    let markdownParagraphs = null;
+    if (markdown) {
+      markdownParagraphs = await page.evaluate(() => {
+        const body = document.querySelector(
+          '[data-message-id="launch-check-assistant"] [data-thread-find-text]',
+        );
+        const paragraphs = [...(body?.querySelectorAll("p") ?? [])];
+        return {
+          count: paragraphs.length,
+          first: paragraphs[0]?.innerText === "Lead line continues here.",
+          second: paragraphs[1]?.innerText === "Second paragraph stands apart.",
+          // Additional diagnostics only. Both paragraphs and their spacing
+          // must independently pass the real X11 image checks in Bash.
+          gap: paragraphs.length === 2 ? Math.round(
+            paragraphs[1].getBoundingClientRect().top - paragraphs[0].getBoundingClientRect().bottom,
+          ) : null,
+        };
+      }).catch(() => null);
+    }
     let compactHeader = null;
     if (size.width === 1000) {
       stage = "compact-header";
@@ -192,6 +212,7 @@ async function main() {
       stage: "complete", failures, nativeSize, bannerDismissed, beforeDismiss, ...summary,
       ...(compactHeader === null ? {} : { compactHeader }),
       ...(branch === undefined ? {} : { branchInline: true }),
+      ...(markdown ? { markdownParagraphs } : {}),
     };
     report(result);
     if (ready !== undefined) {
