@@ -14,8 +14,19 @@ const FAINT: Color = Color::rgba(161, 161, 170, 255);
 const BLUE: Color = Color::rgba(27, 78, 216, 255);
 pub(crate) const WHITE: Color = Color::rgba(255, 255, 255, 255);
 
-pub fn view(scratch_available: bool, open_scratch: impl Fn() + 'static) -> Widget {
-    let mut buttons = vec![project_button("＋ Add project", 116.0, 28.0, BLUE, WHITE)];
+pub fn view(
+    scratch_available: bool,
+    open_scratch: impl Fn() + 'static,
+    open_project: impl Fn() + Clone + 'static,
+) -> Widget {
+    let mut buttons = vec![project_button(
+        "＋ Add project",
+        116.0,
+        28.0,
+        BLUE,
+        WHITE,
+        open_project.clone(),
+    )];
     if scratch_available {
         buttons.push(SizedBox::new().width(8.0).into());
         buttons.push(
@@ -45,7 +56,7 @@ pub fn view(scratch_available: bool, open_scratch: impl Fn() + 'static) -> Widge
     ])
     .main_axis_size(MainAxisSize::Min);
     Row::new(vec![
-        sidebar(false),
+        sidebar(None, Some(open_project)),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
@@ -62,12 +73,14 @@ pub fn view(scratch_available: bool, open_scratch: impl Fn() + 'static) -> Widge
     .into()
 }
 
-pub(crate) fn sidebar(scratch: bool) -> Widget {
-    let empty_caption = if scratch {
-        "No threads yet"
-    } else {
+pub(crate) fn sidebar(project: Option<&str>, open_project: Option<impl Fn() + 'static>) -> Widget {
+    let empty_caption = project.unwrap_or(if open_project.is_some() {
         "No projects yet"
-    };
+    } else {
+        "No threads yet"
+    });
+    let action = open_project
+        .map(|callback| project_button("＋ Add project", 96.0, 26.0, SIDEBAR, MUTED, callback));
     Container::new()
         .width(255.0)
         .color(SIDEBAR)
@@ -77,11 +90,7 @@ pub(crate) fn sidebar(scratch: bool) -> Widget {
             space(24.0),
             label(empty_caption, 12.0, FontWeight::W400, FAINT),
             space(8.0),
-            if scratch {
-                space(26.0)
-            } else {
-                project_button("＋ Add project", 96.0, 26.0, SIDEBAR, MUTED)
-            },
+            action.unwrap_or_else(|| space(26.0)),
             Spacer::new().into(),
             line("⚙     ⑂     ⊙     ▥", 48.0, MUTED),
         ]))
@@ -98,22 +107,25 @@ fn line(text: &str, height: f32, color: Color) -> Widget {
         .into()
 }
 
-fn project_button(text: &str, width: f32, height: f32, background: Color, ink: Color) -> Widget {
-    // The project picker isn't connected yet. This is not an actionable control.
-    let decoration = BoxDecoration::new()
-        .color(background)
-        .border_radius(BorderRadius::all(Radius::circular(8.0)));
-    Container::new()
-        .width(width)
-        .height(height)
-        .alignment(Alignment::CENTER)
-        .decoration(decoration)
-        .child(label(
-            text,
-            if width < 100.0 { 11.0 } else { 14.0 },
-            FontWeight::W500,
-            ink,
-        ))
+fn project_button(
+    text: &str,
+    width: f32,
+    height: f32,
+    background: Color,
+    ink: Color,
+    click: impl Fn() + 'static,
+) -> Widget {
+    Button::new(text)
+        .style(
+            style(height, background, ink)
+                .fixed_size(Size::new(width, height))
+                .text_style(
+                    TextStyle::new()
+                        .font_family("Liberation Sans")
+                        .font_size(if width < 100.0 { 11.0 } else { 14.0 }),
+                ),
+        )
+        .on_click(click)
         .into()
 }
 

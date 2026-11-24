@@ -1,4 +1,5 @@
 mod empty_workspace;
+mod project_picker;
 mod welcome;
 mod workspace;
 
@@ -6,12 +7,35 @@ use butler::{
     landing::{Landing, resolve_landing},
     onboarding::{Route, StartupEvidence},
     profile::Profile,
+    projects::LocalProjects,
 };
 use incular::prelude::*;
-use std::{env, path::PathBuf};
+use project_picker::Picker;
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let profile = profile_root().map(Profile::new);
+    let state = profile_root();
+    let profile = state.as_ref().map(Profile::new);
+    let projects = state.map(LocalProjects::new);
+    let saved_project = projects.as_ref().map(LocalProjects::list).transpose();
+    let active_project = Signal::new(
+        saved_project
+            .as_ref()
+            .ok()
+            .and_then(|p| p.as_ref())
+            .and_then(|p| p.first())
+            .cloned(),
+    );
+    let picker_error = Signal::new(
+        saved_project
+            .err()
+            .map(|e| format!("Could not load saved projects: {e}")),
+    );
+    let picker = Signal::new(Picker::Closed);
+    let path = TextEditingController::new();
     let completed = profile
         .as_ref()
         .map(Profile::onboarding_completed)
@@ -59,20 +83,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             })
-        } else if scratch_open.get() {
-            workspace::no_provider_scratch()
         } else {
-            match resolve_landing(&[], true, profile.is_some()) {
-                Landing::Empty {
-                    can_start_without_project,
-                } => {
-                    let scratch_open = scratch_open.clone();
-                    empty_workspace::view(can_start_without_project, move || {
-                        scratch_open.set(true);
-                    })
+            let workspace = if let Some(project) = active_project.get() {
+                workspace::no_provider_draft(Some(project.title()))
+            } else if scratch_open.get() {
+                workspace::no_provider_draft(None)
+            } else {
+                match resolve_landing(&[], true, profile.is_some()) {
+                    Landing::Empty {
+                        can_start_without_project,
+                    } => {
+                        let scratch_open = scratch_open.clone();
+                        let picker = picker.clone();
+                        let path = path.clone();
+                        empty_workspace::view(
+                            can_start_without_project,
+                            move || {
+                                scratch_open.set(true);
+                            },
+                            move || {
+                                path.clear();
+                                picker.set(Picker::Sources);
+                            },
+                        )
+                    }
+                    _ => unreachable!("no projects are loaded in the current local workspace"),
                 }
-                _ => unreachable!("no projects are loaded in the current local workspace"),
-            }
+            };
+            let active_project = active_project.clone();
+            let step = picker.clone();
+            let error = picker_error.clone();
+            let projects = projects.clone();
+            project_picker::overlay(
+                workspace,
+                picker.clone(),
+                path.clone(),
+                picker_error.get(),
+                move |input| {
+                    let result = projects
+                        .as_ref()
+                        .ok_or_else(|| {
+                            std::io::Error::other("No local profile directory is available.")
+                        })
+                        .and_then(|store| store.open(Path::new(&input)));
+                    match result {
+                        Ok(project) => {
+                            error.set(None);
+                            active_project.set(Some(project));
+                            step.set(Picker::Closed);
+                        }
+                        Err(e) => {
+                            error.set(Some(format!("Could not open folder: {e}")));
+                        }
+                    }
+                },
+            )
         };
         Directionality::new(TextDirection::Ltr, root).into()
     })?;

@@ -65,6 +65,8 @@ capture_one() (
   sleep 3
   if [[ "$name" == t3 || "$name" == butler ]]; then
     await_text "$window" "$out/$name-startup.png" 'Start without an agent' '240x42+270+601'
+  elif [[ "$name" == butler-project-reopened ]]; then
+    await_text "$window" "$out/$name-startup.png" 'ParityFixture'
   else
     await_text "$window" "$out/$name-startup.png" 'What should we work on' '465x103+535+355'
   fi
@@ -83,6 +85,15 @@ capture_one() (
     xdotool windowfocus "$window" mousemove --window "$window" 365 620 click 1
     xdotool mousemove 1390 890
     if await_text "$window" "$out/t3-after-welcome.png" 'what should we work on' '465x103+535+355'; then
+      xdotool windowfocus "$window" mousemove --window "$window" 670 462 click 1
+      xdotool mousemove 1390 890
+      if await_text "$window" "$out/t3-add-project.png" 'Local folder'; then
+        xdotool windowfocus "$window" key Escape
+        await_text "$window" "$out/t3-after-welcome.png" 'What should we work on' '465x103+535+355'
+      else
+        xdotool windowfocus "$window" key Escape
+        touch "$out/t3-project-sources-unverified"
+      fi
       # A profile without a provider must enter the gated scratch composer.
       xdotool windowfocus "$window" mousemove --window "$window" 828 462 click 1
       xdotool mousemove 1390 890
@@ -109,6 +120,20 @@ capture_one() (
     verify_scratch_draft "$window" "$out/butler-after-welcome"
   elif [[ "$name" == butler-reopened ]]; then
     verify_scratch_draft "$window" "$out/butler-reopened"
+  elif [[ "$name" == butler-import ]]; then
+    xdotool windowfocus "$window" mousemove --window "$window" 670 462 click 1
+    xdotool mousemove 1390 890
+    await_text "$window" "$out/butler-add-project.png" 'Local folder'
+    click_label "$window" "$out/butler-add-project.png" 'Local folder'
+    await_text "$window" "$out/butler-local-folder.png" 'Absolute folder path'
+    click_label "$window" "$out/butler-local-folder.png" 'Absolute folder path'
+    xdotool type --clearmodifiers "$project_fixture"
+    click_label "$window" "$out/butler-local-folder.png" 'Open folder'
+    xdotool mousemove 1390 890
+    await_text "$window" "$out/butler-imported.png" 'ParityFixture'
+    grep -Fxq "$project_fixture" "$runtime/state/butler/local-projects"
+    [[ "$(git -C "$project_fixture" rev-parse --show-toplevel)" == "$project_fixture" ]]
+    [[ -z "$(git -C "$project_fixture" status --porcelain)" ]]
   fi
 )
 
@@ -138,6 +163,27 @@ await_text() {
   done
   printf 'Expected text "%s" in %s; last recognized text:\n%s\n' "$expected" "$file" "$actual" >&2
   return 1
+}
+
+# Click an actual rendered label instead of relying on intermediate picker coordinates.
+click_label() {
+  local window=$1 file=$2 label=$3 position x y
+  position=$(tesseract "$file" stdout --psm 11 tsv 2>/dev/null |
+    awk -F '\t' -v label="$label" '
+      $1 == 5 && $12 != "" {
+        key = $2 FS $3 FS $4 FS $5
+        if (s[key] == "") { left[key] = $7; y[key] = $8 + int($10 / 2) }
+        s[key] = s[key] (s[key] == "" ? "" : " ") $12
+        right[key] = $7 + $9
+      }
+      END { for (k in s) if (tolower(s[k]) == tolower(label)) { print int((left[k]+right[k])/2), y[k]; exit } }
+    ')
+  if [[ -z "$position" ]]; then
+    printf 'Cannot locate label "%s" in %s\n' "$label" "$file" >&2
+    return 1
+  fi
+  read -r x y <<<"$position"
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1
 }
 
 assert_provider_gate() {
@@ -185,6 +231,12 @@ fi
 if [[ "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
   CAPTURE_PROFILE=butler capture_one butler-reopened "$butler"
   echo "Welcome skip and profile restart smoke test passed"
+  project_fixture="$tmp/ParityFixture"
+  mkdir -p "$project_fixture"
+  git -C "$project_fixture" init -q
+  CAPTURE_PROFILE=butler capture_one butler-import "$butler"
+  CAPTURE_PROFILE=butler capture_one butler-project-reopened "$butler"
+  echo "Local project import and profile restart smoke test passed"
 fi
 if [[ -e "$out/t3-landing-unverified" ]]; then
   echo "T3 Code post-onboarding state was not verified" >&2

@@ -5,9 +5,10 @@ use incular::prelude::*;
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, label, sidebar, space};
 
-pub fn no_provider_scratch() -> Widget {
+pub fn no_provider_draft(project: Option<String>) -> Widget {
+    let title = project.clone().unwrap_or_else(|| "No project".into());
     Row::new(vec![
-        sidebar(true),
+        sidebar(project.as_deref(), None::<fn()>),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
@@ -18,13 +19,13 @@ pub fn no_provider_scratch() -> Widget {
                             .padding(EdgeInsets::symmetric(20.0, 0.0))
                             .alignment(Alignment::CENTER_LEFT)
                             .child(label(
-                                "⬚ No project   /   New thread",
+                                &format!("⬚ {title}   /   New thread"),
                                 14.0,
                                 FontWeight::W500,
                                 INK,
                             )),
                     ),
-                    Expanded::new(LayoutBuilder::new(|_, constraints| {
+                    Expanded::new(LayoutBuilder::new(move |_, constraints| {
                         let width = constraints.max_width();
                         let height = constraints.max_height();
                         let margin = if width >= 720.0 { 48.0 } else { 16.0 };
@@ -37,7 +38,7 @@ pub fn no_provider_scratch() -> Widget {
                                     space(top),
                                     Container::new()
                                         .width(composer_width)
-                                        .child(composer())
+                                        .child(composer(&title))
                                         .into(),
                                 ])
                                 .cross_axis_alignment(CrossAxisAlignment::Start),
@@ -55,11 +56,11 @@ pub fn no_provider_scratch() -> Widget {
     .into()
 }
 
-fn composer() -> Widget {
+fn composer(title: &str) -> Widget {
     Column::new(vec![
         centered("What should we work on?", 32.0, FontWeight::W400),
         space(10.0),
-        centered("No project", 14.0, FontWeight::W500),
+        centered(title, 14.0, FontWeight::W500),
         space(20.0),
         Container::new()
             .height(112.0)
