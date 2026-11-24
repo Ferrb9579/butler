@@ -2,7 +2,7 @@
 
 Butler uses [Incular `71feef9`](https://github.com/FabortLabs/incular/tree/71feef92286dfd6f8accd9c17c14f292da746490). This is the app-side log of differences from Flutter, not the list of things Butler still needs to copy from T3 Code. Incular's [own gap log](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/INCULAR-GAPS.md) covers other apps and may describe older behavior, so recheck the pinned code before carrying an entry over.
 
-When a gap affects Butler, record the Incular revision, platform or renderer if relevant, minimal reproduction, Flutter behavior, Incular behavior, and the workaround. This includes behavior, functionality, accessibility, layout, typography, and colors. Mark a difference as source-verified, runtime-verified, or still under investigation. Recheck open entries when updating the Incular pin.
+When a gap affects Butler, record the Incular revision, platform or renderer if relevant, minimal reproduction, Flutter behavior, Incular behavior, and the proposed upstream fix. If it needs an Incular fix, log it here rather than adding a workaround to Butler. Continue independent Butler work and verify the framework fix before removing the entry from the open list. This includes behavior, functionality, accessibility, layout, typography, and colors. Mark a difference as source-verified, runtime-verified, or still under investigation. Recheck open entries when updating the Incular pin.
 
 ## Verified at the current pin
 
@@ -18,7 +18,7 @@ When a gap affects Butler, record the Incular revision, platform or renderer if 
 
 **Status:** Source-verified behavior on the lower-level surface used by Butler, not a blanket claim about Incular's Material buttons. Flutter's [`ButtonStyle.padding`](https://api.flutter.dev/flutter/material/ButtonStyle/padding.html) pads an arbitrary button child. In Incular's [action-surface lowering](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-widgets/src/tree/widget/constructors.rs#L434-L457), the label-only branch wraps the content in padding, but the custom-child branch passes the child through unchanged.
 
-**Butler workaround:** Put the padding inside the child of the [folder palette's custom action](src/project_picker.rs), preserving a full-row click target and an explicit accessible name.
+**Butler evidence:** The [folder palette's existing custom action](src/project_picker.rs) defines its own row padding. The framework should apply the surface padding consistently; do not add another app-side workaround.
 
 **Repro / acceptance:** Give a label-only action and a custom-child action the same bounds and 16 px horizontal padding. The child in the second action should be inset without shrinking the hit target. Keep upper-level Material behavior as a separate test.
 
@@ -38,7 +38,7 @@ When a gap affects Butler, record the Incular revision, platform or renderer if 
 
 **Status:** Source-verified visual and theme difference. Flutter's [`showDialog`](https://api.flutter.dev/flutter/material/showDialog.html) uses an explicit scrim color first, then the dialog theme's color, then `Colors.black54` (alpha 138/255). The pinned [Incular Material `DialogHandle`](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-material/src/feedback/dialog_handles.rs#L32-L41) defaults to black at alpha 96/255 and uses that stored color unless the caller applies [`barrier_color`](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-material/src/feedback/dialog_handles.rs#L67-L99). Butler's custom blurred overlays use their own styles, so their images do not prove this stock-widget difference.
 
-**Repro / acceptance:** Show each framework's stock Material dialog over white with default theme. Sample a backdrop pixel outside the dialog after the animation. Repeat with a dialog theme specifying a different barrier color. On Incular, use an explicit barrier color until default/themed parity is implemented. Runtime twin check pending.
+**Repro / acceptance:** Show each framework's stock Material dialog over white with default theme. Sample a backdrop pixel outside the dialog after the animation. Repeat with a dialog theme specifying a different barrier color. Fix the stock default and theme resolution in Incular rather than overriding them in Butler. Runtime twin check pending.
 
 ## Investigations, not confirmed Incular gaps
 
