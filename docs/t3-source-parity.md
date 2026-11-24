@@ -279,3 +279,8 @@ that message. Older records and cross-project indexing are still unported.
 
 - T3's pinned `CommandPalette.tsx` leaves New Project unhighlighted initially; the path summary is outside the result list. Up/Down can select the real Add existing project row, editing clears it, and Enter chooses the result instead of creating. The header then displays the platform Create modifier; use the same validated local Create path if that chord is pressed.
 - Butler scopes the navigation to the focused raw name editor. The footer uses the pinned Lucide arrow assets and changes Enter Create to Enter Select only when the result is selected. A new dispatch does not intercept composing keys; IG-001 initial autofocus and IG-007 raw IME completion remain open.
+
+### Local folder typed browsing
+
+- The pinned `packages/client-runtime/src/state/filesystem.ts` splits an absolute query into its parent directory and leaf, uses a trailing separator to clear the leaf, and shows dot-prefixed directories only when the user types a dot-prefixed leaf. Butler ports those behaviors and the exact / prefix / boundary / contains / subsequence ranking tiers for case-folded text. A previously read parent is reused across leaf edits; a failed directory read clears the old rows.
+- Clicking a matching directory only browses to it. The existing Open folder action still validates and registers an existing absolute directory, separately. This slice retains the existing synchronous local directory-read path and does not add Tab completion, keyboard selection, NFC normalization, implicit creation, or a new provider/transport.

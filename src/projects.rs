@@ -301,12 +301,21 @@ pub struct FolderListing {
 
 impl FolderListing {
     pub fn read(path: &Path) -> io::Result<Self> {
+        Self::read_inner(path, false)
+    }
+
+    /// Includes dot-prefixed children so the picker can reveal them on demand.
+    pub fn read_for_picker(path: &Path) -> io::Result<Self> {
+        Self::read_inner(path, true)
+    }
+
+    fn read_inner(path: &Path, include_dot_entries: bool) -> io::Result<Self> {
         let directory = path.canonicalize()?;
         let mut children = fs::read_dir(&directory)?
             .filter_map(Result::ok)
             .filter_map(|entry| {
                 let name = entry.file_name().into_string().ok()?;
-                if name.starts_with('.') {
+                if !include_dot_entries && name.starts_with('.') {
                     return None;
                 }
                 let path = entry.path();

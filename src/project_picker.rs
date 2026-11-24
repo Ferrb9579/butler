@@ -194,6 +194,170 @@ impl ThreadProjects {
 }
 
 #[derive(Clone)]
+pub struct LocalBrowse {
+    requested: Signal<Option<PathBuf>>,
+    listing: Signal<Option<FolderListing>>,
+    leaf: Signal<String>,
+    error: Signal<Option<String>>,
+}
+
+impl LocalBrowse {
+    pub fn new() -> Self {
+        Self {
+            requested: Signal::new(None),
+            listing: Signal::new(None),
+            leaf: Signal::new(String::new()),
+            error: Signal::new(None),
+        }
+    }
+
+    fn reset(&self, home: Option<&Path>) {
+        self.leaf.set(String::new());
+        self.requested.set(None);
+        self.listing.set(None);
+        self.error.set(None);
+        if let Some(home) = home {
+            self.load(home);
+        }
+    }
+
+    fn load(&self, directory: &Path) -> bool {
+        if self.requested.get().as_deref() == Some(directory) {
+            return self.listing.get().is_some();
+        }
+        self.requested.set(Some(directory.to_owned()));
+        match FolderListing::read_for_picker(directory) {
+            Ok(listing) => {
+                self.listing.set(Some(listing));
+                self.error.set(None);
+                true
+            }
+            Err(error) => {
+                self.listing.set(None);
+                self.error
+                    .set(Some(format!("Could not browse folder: {error}")));
+                false
+            }
+        }
+    }
+
+    fn edited(&self, text: &str, home: Option<&Path>) {
+        let (directory, leaf) = split_folder_query(text);
+        self.leaf.set(leaf.to_owned());
+        let directory = directory.or(home);
+        if let Some(directory) = directory {
+            self.load(directory);
+        }
+    }
+
+    fn browse_to(&self, directory: &Path, editor: &TextEditingController) {
+        // A row is navigation only. It never opens or registers a project.
+        if self.load(directory) {
+            self.leaf.set(String::new());
+            let mut text = directory.to_string_lossy().into_owned();
+            if !text.ends_with(std::path::is_separator) {
+                text.push(std::path::MAIN_SEPARATOR);
+            }
+            editor.set_text(text);
+        }
+    }
+
+    fn visible_children(&self, listing: &FolderListing) -> Vec<(String, PathBuf)> {
+        let leaf = self.leaf.get();
+        let query = leaf.to_lowercase();
+        let mut matches = listing
+            .children
+            .iter()
+            .filter(|(name, _)| leaf.starts_with('.') || !name.starts_with('.'))
+            .filter_map(|entry| {
+                folder_match(&entry.0.to_lowercase(), &query).map(|score| (score, entry))
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by_key(|(score, _)| *score);
+        matches
+            .into_iter()
+            .map(|(_, entry)| entry.clone())
+            .collect()
+    }
+}
+
+fn split_folder_query(text: &str) -> (Option<&Path>, &str) {
+    if Path::new(text).is_absolute() {
+        if let Some(separator) = text.rfind(std::path::is_separator) {
+            let end = separator + 1;
+            return (Some(Path::new(&text[..end])), &text[end..]);
+        }
+    }
+    (None, text)
+}
+
+/// Rank typed directory names without re-reading the same parent on each edit.
+fn folder_match(value: &str, query: &str) -> Option<(u8, usize)> {
+    let penalty = value
+        .encode_utf16()
+        .count()
+        .saturating_sub(query.encode_utf16().count())
+        .min(64);
+    if query.is_empty() || value == query {
+        return Some((0, 0));
+    }
+    if value.starts_with(query) {
+        return Some((1, penalty));
+    }
+    if let Some((index, marker)) = value.char_indices().find(|(index, c)| {
+        matches!(c, ' ' | '-' | '_' | '.') && value[index + c.len_utf8()..].starts_with(query)
+    }) {
+        return Some((
+            2,
+            value[..index + marker.len_utf8()].encode_utf16().count() * 2 + penalty,
+        ));
+    }
+    if let Some(index) = value.find(query) {
+        return Some((3, value[..index].encode_utf16().count() * 2 + penalty));
+    }
+    let mut remaining = value.encode_utf16().enumerate();
+    let mut last = None;
+    let mut score = penalty;
+    for character in query.encode_utf16() {
+        let (index, _) = remaining.find(|(_, candidate)| *candidate == character)?;
+        score += last.map_or(index * 2, |previous| (index - previous - 1) * 4);
+        last = Some(index);
+    }
+    Some((4, score))
+}
+
+#[cfg(test)]
+mod local_browse_tests {
+    use super::*;
+
+    #[test]
+    fn directory_leaf_preserves_dots_and_the_navigation_separator() {
+        let absolute = if cfg!(windows) {
+            "C:\\Home\\"
+        } else {
+            "/Home/"
+        };
+        let typed = format!("{absolute}.");
+        assert_eq!(split_folder_query(&typed), (Some(Path::new(absolute)), "."));
+        assert_eq!(
+            split_folder_query(absolute),
+            (Some(Path::new(absolute)), "")
+        );
+        assert_eq!(split_folder_query("alpha"), (None, "alpha"));
+    }
+
+    #[test]
+    fn folder_ranking_prefers_exact_prefix_boundary_then_subsequence() {
+        assert_eq!(folder_match("alpha", "alpha"), Some((0, 0)));
+        assert_eq!(folder_match("alphabets", "alpha"), Some((1, 4)));
+        assert_eq!(folder_match("top-alpha", "alpha"), Some((2, 12)));
+        assert_eq!(folder_match("topalpha", "alpha"), Some((3, 9)));
+        assert_eq!(folder_match("t-a-l-p-h-a", "alpha"), Some((4, 26)));
+        assert_eq!(folder_match("alpine", "alpha"), None);
+    }
+}
+
+#[derive(Clone)]
 pub struct RemoteFlow {
     url: TextEditingController,
     url_text: Signal<String>,
@@ -315,8 +479,7 @@ pub fn overlay(
     project_data: Option<PathBuf>,
     creating: bool,
     home: Option<PathBuf>,
-    browse: Signal<Option<FolderListing>>,
-    browse_error: Signal<Option<String>>,
+    local_browse: LocalBrowse,
     error: Option<String>,
     submit: impl Fn(ProjectRequest) + Clone + 'static,
 ) -> Widget {
@@ -551,6 +714,8 @@ pub fn overlay(
                 )
                 .into()
             } else if current == Picker::Local {
+                let local_browse = local_browse.clone();
+                let local_home = home.clone();
                 Expanded::new(
                     EditableText::new(path.clone())
                         .placeholder("Absolute folder path")
@@ -560,7 +725,8 @@ pub fn overlay(
                                 .font_family("Liberation Sans")
                                 .font_size(14.0)
                                 .color(INK),
-                        ),
+                        )
+                        .on_changed(move |value| local_browse.edited(value, local_home.as_deref())),
                 )
                 .into()
             } else {
@@ -613,15 +779,12 @@ pub fn overlay(
                 .size(Size::new(574.0, 48.0))
                 .hover_color(Color::rgba(241, 241, 244, 255))
                 .on_press({
-                    let browse = browse.clone();
-                    let browse_error = browse_error.clone();
+                    let local_browse = local_browse.clone();
+                    let local_editor = path.clone();
                     let step = step.clone();
                     move || {
-                        browse.set(None);
-                        browse_error.set(None);
-                        if let Some(home) = &home {
-                            navigate(home.clone(), &browse, &browse_error);
-                        }
+                        local_editor.clear();
+                        local_browse.reset(home.as_deref());
                         step.set(Picker::Local);
                     }
                 })
@@ -659,7 +822,7 @@ pub fn overlay(
             ));
         }
         Picker::Local => {
-            let listing = browse.get();
+            let listing = local_browse.listing.get();
             let current = listing.as_ref().map(|value| value.directory.clone());
             rows.push(row(
                 28.0,
@@ -689,18 +852,16 @@ pub fn overlay(
                         "corner-left-up",
                         "Parent directory",
                         parent,
-                        browse.clone(),
-                        browse_error.clone(),
+                        local_browse.clone(),
                         path.clone(),
                     ));
                 }
-                for (name, target) in listing.children {
+                for (name, target) in local_browse.visible_children(&listing) {
                     dirs.push(browse_action(
                         "folder",
                         &name,
                         target,
-                        browse.clone(),
-                        browse_error.clone(),
+                        local_browse.clone(),
                         path.clone(),
                     ));
                 }
@@ -718,7 +879,7 @@ pub fn overlay(
                     );
                 }
             }
-            for message in [browse_error.get(), error].into_iter().flatten() {
+            for message in [local_browse.error.get(), error].into_iter().flatten() {
                 rows.push(row(
                     30.0,
                     label(
@@ -1324,30 +1485,11 @@ fn short_action(text: &str, click: impl Fn() + 'static) -> Widget {
         .into()
 }
 
-fn navigate(
-    target: PathBuf,
-    browse: &Signal<Option<FolderListing>>,
-    error: &Signal<Option<String>>,
-) -> bool {
-    match FolderListing::read(&target) {
-        Ok(listing) => {
-            error.set(None);
-            browse.set(Some(listing));
-            true
-        }
-        Err(problem) => {
-            error.set(Some(format!("Could not browse folder: {problem}")));
-            false
-        }
-    }
-}
-
 fn browse_action(
     glyph: &str,
     name: &str,
     target: PathBuf,
-    browse: Signal<Option<FolderListing>>,
-    error: Signal<Option<String>>,
+    browse: LocalBrowse,
     path: TextEditingController,
 ) -> Widget {
     ActionSurface::with_child(row(
@@ -1363,9 +1505,7 @@ fn browse_action(
     .label(name)
     .hover_color(Color::rgba(241, 241, 244, 255))
     .on_press(move || {
-        if navigate(target.clone(), &browse, &error) {
-            path.set_text(target.to_string_lossy().into_owned());
-        }
+        browse.browse_to(&target, &path);
     })
     .into()
 }

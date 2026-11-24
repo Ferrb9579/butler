@@ -29,12 +29,12 @@ use butler::{
     managed_projects,
     onboarding::{Route, StartupEvidence},
     profile::Profile,
-    projects::{FolderListing, LocalProject, LocalProjects},
+    projects::{LocalProject, LocalProjects},
     remote_projects::{self, RemoteProject},
     threads::{Conversation, ThreadStore, Workspace},
 };
 use incular::prelude::*;
-use project_picker::{NewProject, Picker, ProjectRequest, RemoteFlow, ThreadProjects};
+use project_picker::{LocalBrowse, NewProject, Picker, ProjectRequest, RemoteFlow, ThreadProjects};
 use std::{
     cell::{Cell, RefCell},
     env,
@@ -145,8 +145,7 @@ fn application_with_services(
             .map(|e| format!("Could not load saved projects: {e}")),
     );
     let picker = Signal::new(Picker::Closed);
-    let browse = Signal::new(None::<FolderListing>);
-    let browse_error = Signal::new(None::<String>);
+    let local_browse = LocalBrowse::new();
     let path = TextEditingController::new();
     let new_project = NewProject::new();
     let remote_flow = RemoteFlow::new();
@@ -662,8 +661,7 @@ fn application_with_services(
                 projects.as_ref().map(|store| store.data_dir().to_owned()),
                 creating,
                 home.clone(),
-                browse.clone(),
-                browse_error.clone(),
+                local_browse.clone(),
                 picker_error.get(),
                 move |request| {
                     if pending.get() {
@@ -3176,6 +3174,62 @@ mod ui_tests {
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].root, root.canonicalize().unwrap());
     }
+
+    #[test]
+    fn local_folder_typing_filters_and_browsing_does_not_register() {
+        let tmp = Fixture::new();
+        let home = tmp.0.join("Home");
+        let alpha = home.join("Alpha");
+        let nested = alpha.join("Nested");
+        let profile = tmp.0.join("profile");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir(home.join("Alpine")).unwrap();
+        fs::create_dir(home.join(".hidden")).unwrap();
+        fs::write(home.join("Alphanumeric"), "not a directory").unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let mut app =
+            application(Some(profile.clone()), Some(home.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, move |sim| {
+            let edit = |text: &str| {
+                sim.focus("Absolute folder path").unwrap();
+                let modifier = if cfg!(target_os = "macos") {
+                    Code::MetaLeft
+                } else {
+                    Code::ControlLeft
+                };
+                sim.key_down(modifier).unwrap();
+                sim.press_key(KeyboardKey::Character("a".into()), Code::KeyA)
+                    .unwrap();
+                sim.key_up(modifier).unwrap();
+                sim.type_text(text).unwrap();
+            };
+            let root = format!("{}{}", home.display(), std::path::MAIN_SEPARATOR);
+            sim.click("Add project").unwrap();
+            sim.click("Local folder").unwrap();
+            assert!(sim.focus(".hidden").is_err());
+            assert!(sim.focus("Alphanumeric").is_err());
+            edit(&format!("{root}alpi"));
+            sim.focus("Alpine").unwrap();
+            assert!(sim.focus("Alpha").is_err());
+            edit(&format!("{root}.h"));
+            sim.focus(".hidden").unwrap();
+            assert!(sim.focus("Alpha").is_err());
+            edit(&root);
+            sim.focus("Alpha").unwrap();
+            sim.focus("Alpine").unwrap();
+            assert!(sim.focus(".hidden").is_err());
+            edit(&format!("{root}missing{}", std::path::MAIN_SEPARATOR));
+            assert!(sim.focus("Alpha").is_err());
+            edit(&format!("{root}alph"));
+            sim.click("Alpha").unwrap();
+            sim.focus("Nested").unwrap();
+            assert!(sim.focus("Alpine").is_err());
+            sim.focus("Open folder").unwrap();
+        });
+        assert!(LocalProjects::new(profile).list().unwrap().is_empty());
+        assert!(nested.is_dir());
+    }
+
     #[test]
     fn saves_provider_display_name_locally_and_reopens_it() {
         use butler::profile::Provider;
