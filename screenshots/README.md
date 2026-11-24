@@ -151,3 +151,9 @@ interaction and counts in this fixture, not visual parity.
 - [T3 Code](t3/saved-thread-composer-light-1280x800.png) · [Butler](butler/saved-thread-composer-light-1280x800.png)
 - Original 1280×800 X11 frames from [native run 45421205351](https://github.com/Ferrb9579/butler/actions/runs/45421205351), T3 Code `59651c1761f6c63e9b6056839067066968e6a406`, Butler `7129b926f41e53ac64f3a6d8daa4a46d0a381844`. Both show the same saved transcript with Find closed, empty composer, and visible workspace details. T3 retained its default provider selection with the missing-provider alert dismissed. No message was submitted.
 - The dock spans the same x304–955 and ends at y779 in both; Butler's top is 3 px higher. Butler shows the unavailable-provider prompt, a disabled Send and one real details row. Provider, microphone, attachment and other details controls are not yet mirrored. 265,425 of 1,024,000 raw pixels differ. This is a layout comparison, not visual parity or proof of native text entry.
+
+## Compact saved-thread details (native behavior and layout)
+
+- [T3 Code](t3/saved-thread-compact-details-open-light-1000x800.png) · [Butler](butler/saved-thread-compact-details-open-light-1000x800.png)
+- Original 1000×800 X11 frames from [native run 45426627050](https://github.com/Ferrb9579/butler/actions/runs/45426627050), pinned T3 Code `59651c1761f6c63e9b6056839067066968e6a406` and Butler `e7a41e2d075d21cc5fccd57c3cb22009d3725e39`. Both start closed, open through their ordinary controls, and close with Escape. The popup area returns to its exact pre-open pixels in each app. No project or provider action was used.
+- The opened card spans x708–987 from y48 in both. Butler has one workspace row; T3 has additional editor, project-script and Git rows. 268,151 of 800,000 raw pixels differ with the cards open. The closed and dismissed images remain in the original artifact, not duplicate files in the repository.
