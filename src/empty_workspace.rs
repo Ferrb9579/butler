@@ -56,7 +56,7 @@ pub fn view(
     ])
     .main_axis_size(MainAxisSize::Min);
     Row::new(vec![
-        sidebar(None, Some(open_project)),
+        sidebar(None, Some(open_project), Vec::new()),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
@@ -73,11 +73,19 @@ pub fn view(
     .into()
 }
 
-pub(crate) fn sidebar(project: Option<&str>, open_project: Option<impl Fn() + 'static>) -> Widget {
+pub(crate) fn sidebar(
+    project: Option<&str>,
+    open_project: Option<impl Fn() + 'static>,
+    threads: Vec<Widget>,
+) -> Widget {
     let empty_caption = project.unwrap_or(if open_project.is_some() {
         "No projects yet"
     } else {
-        "No threads yet"
+        if threads.is_empty() {
+            "No threads yet"
+        } else {
+            "Threads"
+        }
     });
     let action = open_project
         .map(|callback| project_button("＋ Add project", 96.0, 26.0, SIDEBAR, MUTED, callback));
@@ -91,7 +99,12 @@ pub(crate) fn sidebar(project: Option<&str>, open_project: Option<impl Fn() + 's
             label(empty_caption, 12.0, FontWeight::W400, FAINT),
             space(8.0),
             action.unwrap_or_else(|| space(26.0)),
-            Spacer::new().into(),
+            Expanded::new(SingleChildScrollView::new(
+                Column::new(threads)
+                    .main_axis_size(MainAxisSize::Min)
+                    .cross_axis_alignment(CrossAxisAlignment::Stretch),
+            ))
+            .into(),
             line("⚙     ⑂     ⊙     ▥", 48.0, MUTED),
         ]))
         .into()

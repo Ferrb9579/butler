@@ -1,18 +1,56 @@
 //! Draft immediately after "Start without a project" on a profile with no provider.
 //! Reference: T3 Code v0.1.11 desktop, native fixture 45329928604.
 
-use incular::prelude::*;
+use butler::threads::{FirstTurn, ThreadSummary};
+use incular::{
+    controls::{Button, ButtonStyle, ButtonVariant},
+    prelude::*,
+};
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, label, sidebar, space};
 
 pub fn draft(
     project: Option<String>,
+    history: Vec<ThreadSummary>,
+    selected: Option<FirstTurn>,
+    history_error: Option<String>,
+    open_thread: impl Fn(uuid::Uuid) + Clone + 'static,
     open_settings: impl Fn() + Clone + 'static,
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
     let title = project.clone().unwrap_or_else(|| "No project".into());
+    let mut threads = history
+        .into_iter()
+        .map(|thread| {
+            let open_thread = open_thread.clone();
+            Button::with_child(
+                label(&thread.title, 13.0, FontWeight::W400, INK)
+                    .accessibility_label(format!("Open thread: {}", thread.title)),
+            )
+            .style(
+                ButtonStyle::new()
+                    .variant(ButtonVariant::Ghost)
+                    .height(32.0)
+                    .background(PAGE)
+                    .padding(EdgeInsets::symmetric(16.0, 0.0))
+                    .alignment(Alignment::CENTER_LEFT),
+            )
+            .on_click(move || open_thread(thread.id))
+            .into()
+        })
+        .collect::<Vec<Widget>>();
+    if let Some(error) = history_error {
+        threads.push(label(&error, 12.0, FontWeight::W400, MUTED));
+    }
+    let route_title = selected
+        .as_ref()
+        .and_then(|turn| turn.prompt.trim().lines().next())
+        .unwrap_or("New thread")
+        .chars()
+        .take(72)
+        .collect::<String>();
     Row::new(vec![
-        sidebar(project.as_deref(), None::<fn()>),
+        sidebar(project.as_deref(), None::<fn()>, threads),
         Container::new().width(1.0).color(RULE).into(),
         Expanded::new(
             Container::new().color(PAGE).child(
@@ -23,7 +61,7 @@ pub fn draft(
                             .padding(EdgeInsets::symmetric(20.0, 0.0))
                             .alignment(Alignment::CENTER_LEFT)
                             .child(label(
-                                &format!("⬚ {title}   /   New thread"),
+                                &format!("⬚ {title}   /   {route_title}"),
                                 14.0,
                                 FontWeight::W500,
                                 INK,
@@ -44,6 +82,7 @@ pub fn draft(
                                         .width(composer_width)
                                         .child(composer(
                                             &title,
+                                            selected.as_ref(),
                                             open_settings.clone(),
                                             #[cfg(test)]
                                             offline.clone(),
@@ -67,9 +106,13 @@ pub fn draft(
 
 fn composer(
     title: &str,
+    selected: Option<&FirstTurn>,
     open_settings: impl Fn() + 'static,
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
+    if let Some(turn) = selected {
+        return transcript(turn);
+    }
     #[cfg(test)]
     if let Some(offline) = offline {
         return offline_composer(title, offline);
@@ -161,5 +204,20 @@ fn offline_composer(title: &str, draft: OfflineDraft) -> Widget {
     }
     Column::new(rows)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .into()
+}
+
+fn transcript(turn: &FirstTurn) -> Widget {
+    Container::new()
+        .padding(EdgeInsets::all(16.0))
+        .child(
+            Column::new(vec![
+                label(&turn.prompt, 14.0, FontWeight::W500, INK),
+                space(12.0),
+                label(&turn.reply, 14.0, FontWeight::W400, INK),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Start),
+        )
         .into()
 }

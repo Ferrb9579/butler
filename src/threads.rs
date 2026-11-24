@@ -25,6 +25,12 @@ pub struct FirstTurn {
     pub reply: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadSummary {
+    pub id: Uuid,
+    pub title: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct ThreadStore {
     state: PathBuf,
@@ -113,6 +119,49 @@ impl ThreadStore {
         Ok(Some(turn))
     }
 
+    pub fn history(&self, workspace: &Workspace) -> io::Result<Vec<ThreadSummary>> {
+        let records = match fs::read_dir(self.folder()) {
+            Ok(records) => records,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let mut files = Vec::new();
+        for entry in records.filter_map(Result::ok) {
+            if !entry.file_type().is_ok_and(|k| k.is_file()) {
+                continue;
+            }
+            let filename = entry.file_name();
+            let Some(id) = filename
+                .to_str()
+                .and_then(|value| value.strip_suffix(".json"))
+                .and_then(|value| Uuid::parse_str(value).ok())
+            else {
+                continue;
+            };
+            let modified = entry.metadata()?.modified()?;
+            files.push((modified, id));
+        }
+        files.sort_unstable_by(|a, b| b.cmp(a));
+        let mut list = Vec::new();
+        for (_, id) in files {
+            match self.load(id) {
+                Ok(Some(turn)) if &turn.workspace == workspace => {
+                    let first = turn.prompt.trim().lines().next().unwrap_or("New thread");
+                    let title = first.chars().take(72).collect::<String>();
+                    list.push(ThreadSummary { id, title });
+                    if list.len() == 50 {
+                        break;
+                    }
+                }
+                // Ignore a file that disappeared concurrently or a damaged record.
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::InvalidData => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(list)
+    }
+
     pub fn workspace_directory(&self, turn: &FirstTurn) -> io::Result<PathBuf> {
         match &turn.workspace {
             Workspace::Scratch => ScratchWorkspaces::new(&self.state)
@@ -196,6 +245,13 @@ mod tests {
         store.save(&turn).unwrap();
         let reopened = ThreadStore::new(&state);
         assert_eq!(reopened.load(turn.id).unwrap(), Some(turn.clone()));
+        assert_eq!(
+            reopened.history(&Workspace::Scratch).unwrap(),
+            [ThreadSummary {
+                id: turn.id,
+                title: "Quoted: «bonjour»".into(),
+            }]
+        );
         assert_eq!(reopened.workspace_directory(&turn).unwrap(), folder);
         reopened.save(&turn).unwrap();
         turn.reply = "A different reply".into();
@@ -219,6 +275,8 @@ mod tests {
             reply: "Second".into(),
         };
         store.save(&turn).unwrap();
+        assert!(store.history(&Workspace::Scratch).unwrap().is_empty());
+        assert_eq!(store.history(&turn.workspace).unwrap()[0].id, turn.id);
         assert_eq!(store.load(turn.id).unwrap(), Some(turn));
         assert!(!state.join("scratch").exists());
         assert!(fs::read_dir(root).unwrap().next().is_none());

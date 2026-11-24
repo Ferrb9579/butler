@@ -230,6 +230,9 @@ if [[ "${VERIFY_BUTLER_ONBOARDING:-0}" == 1 ]]; then
   CAPTURE_PROFILE=butler capture_one butler-import "$butler"
   CAPTURE_PROFILE=butler capture_one butler-project-reopened "$butler"
   echo "Local project import and profile restart smoke test passed"
+  if [[ ! -e "$out/t3-provider-settings-unverified" && -f "$out/t3-provider-settings.png" && -f "$out/butler-provider-settings.png" ]]; then
+    compare_frames t3-provider-settings butler-provider-settings provider-settings
+  fi
 fi
 if [[ -e "$out/t3-landing-unverified" ]]; then
   echo "T3 Code post-onboarding state was not verified" >&2

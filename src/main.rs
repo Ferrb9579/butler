@@ -9,6 +9,7 @@ use butler::{
     onboarding::{Route, StartupEvidence},
     profile::Profile,
     projects::{FolderListing, LocalProjects},
+    threads::{FirstTurn, ThreadStore, Workspace},
 };
 use incular::prelude::*;
 use project_picker::Picker;
@@ -18,13 +19,7 @@ use std::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    incular::run(application(
-        profile_root(),
-        local_home(),
-        machine_label(),
-        #[cfg(test)]
-        None,
-    )?)?;
+    incular::run(application(profile_root(), local_home(), machine_label())?)?;
     Ok(())
 }
 
@@ -32,15 +27,15 @@ fn application(
     state: Option<PathBuf>,
     home: Option<PathBuf>,
     device: String,
-    #[cfg(test)] resume: Option<uuid::Uuid>,
 ) -> Result<Application, Box<dyn std::error::Error>> {
     let settings_open = Signal::new(false);
     let settings_provider = Signal::new(2_usize);
     #[cfg(test)]
-    let fixture_enabled = Signal::new(resume.is_some());
+    let fixture_enabled = Signal::new(false);
     #[cfg(test)]
-    let fixture = offline_fixture::Fixture::new(state.clone(), resume)?;
+    let fixture = offline_fixture::Fixture::new(state.clone());
     let profile = state.as_ref().map(Profile::new);
+    let history_store = state.as_ref().map(ThreadStore::new);
     let projects = state.map(LocalProjects::new);
     let saved_project = projects.as_ref().map(LocalProjects::list).transpose();
     let active_project = Signal::new(
@@ -51,6 +46,21 @@ fn application(
             .and_then(|p| p.first())
             .cloned(),
     );
+    let history_workspace = active_project
+        .get()
+        .map_or(Workspace::Scratch, |p| Workspace::Local(p.root));
+    let initial_history = history_store
+        .as_ref()
+        .map(|store| store.history(&history_workspace))
+        .transpose();
+    let history_error = Signal::new(
+        initial_history
+            .as_ref()
+            .err()
+            .map(|e| format!("Could not read threads: {e}")),
+    );
+    let thread_history = Signal::new(initial_history.ok().flatten().unwrap_or_default());
+    let selected_thread = Signal::new(None::<FirstTurn>);
     let picker_error = Signal::new(
         saved_project
             .err()
@@ -82,9 +92,6 @@ fn application(
     let route = Signal::new(initial_route);
     let error = Signal::new(completed.err().map(|error| error.to_string()));
     let agents_open = Signal::new(true);
-    #[cfg(test)]
-    let scratch_open = Signal::new(fixture.resume_scratch);
-    #[cfg(not(test))]
     let scratch_open = Signal::new(false);
     let app = Application::new(move |_cx| {
         let root = if route.get() == Route::Welcome {
@@ -113,8 +120,41 @@ fn application(
             let workspace = if project.is_some() || scratch_open.get() {
                 let settings_open = settings_open.clone();
                 let title = project.as_ref().map(|project| project.title());
+                let selected = selected_thread.clone();
+                let store = history_store.clone();
+                let show_error = history_error.clone();
+                let target = project
+                    .as_ref()
+                    .map_or(Workspace::Scratch, |p| Workspace::Local(p.root.clone()));
                 workspace::draft(
                     title,
+                    thread_history.get(),
+                    selected_thread.get(),
+                    history_error.get(),
+                    move |id| {
+                        let outcome = (|| {
+                            let store = store
+                                .as_ref()
+                                .ok_or_else(|| std::io::Error::other("No local profile."))?;
+                            let turn = store
+                                .load(id)?
+                                .filter(|turn| turn.workspace == target)
+                                .ok_or_else(|| {
+                                    std::io::Error::other("Thread is no longer available.")
+                                })?;
+                            store.workspace_directory(&turn)?;
+                            Ok::<_, std::io::Error>(turn)
+                        })();
+                        match outcome {
+                            Ok(turn) => {
+                                show_error.set(None);
+                                selected.set(Some(turn));
+                            }
+                            Err(error) => {
+                                show_error.set(Some(format!("Could not open thread: {error}")));
+                            }
+                        }
+                    },
                     move || {
                         settings_open.set(true);
                     },
@@ -149,6 +189,10 @@ fn application(
             let step = picker.clone();
             let error = picker_error.clone();
             let projects = projects.clone();
+            let history_store = history_store.clone();
+            let thread_history = thread_history.clone();
+            let history_error = history_error.clone();
+            let selected_thread = selected_thread.clone();
             let desktop = project_picker::overlay(
                 workspace,
                 picker.clone(),
@@ -167,6 +211,18 @@ fn application(
                     match result {
                         Ok(project) => {
                             error.set(None);
+                            let refreshed = history_store
+                                .as_ref()
+                                .map(|store| store.history(&Workspace::Local(project.root.clone())))
+                                .transpose();
+                            history_error.set(
+                                refreshed
+                                    .as_ref()
+                                    .err()
+                                    .map(|e| format!("Could not read threads: {e}")),
+                            );
+                            thread_history.set(refreshed.ok().flatten().unwrap_or_default());
+                            selected_thread.set(None);
                             active_project.set(Some(project));
                             step.set(Picker::Closed);
                         }
@@ -243,7 +299,6 @@ mod offline_fixture {
 
     pub struct Fixture {
         state: Option<PathBuf>,
-        pub resume_scratch: bool,
         thread: Uuid,
         input: TextEditingController,
         sent: Signal<Option<FirstTurn>>,
@@ -251,32 +306,14 @@ mod offline_fixture {
     }
 
     impl Fixture {
-        pub fn new(state: Option<PathBuf>, resume: Option<Uuid>) -> io::Result<Self> {
-            let turn = match resume {
-                Some(id) => {
-                    let store = ThreadStore::new(
-                        state
-                            .as_ref()
-                            .ok_or_else(|| io::Error::other("No local profile."))?,
-                    );
-                    let turn = store.load(id)?.ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::NotFound, "No saved thread.")
-                    })?;
-                    store.workspace_directory(&turn)?;
-                    Some(turn)
-                }
-                None => None,
-            };
-            Ok(Self {
+        pub fn new(state: Option<PathBuf>) -> Self {
+            Self {
                 state,
-                resume_scratch: turn
-                    .as_ref()
-                    .is_some_and(|turn| turn.workspace == Workspace::Scratch),
-                thread: resume.unwrap_or_else(Uuid::new_v4),
+                thread: Uuid::new_v4(),
                 input: TextEditingController::new(),
-                sent: Signal::new(turn),
+                sent: Signal::new(None),
                 error: Signal::new(None),
-            })
+            }
         }
 
         pub fn draft(&self, project: Option<PathBuf>) -> workspace::OfflineDraft {
@@ -376,13 +413,8 @@ mod ui_tests {
         Profile::new(&profile).complete_onboarding().unwrap();
         let canonical = root.canonicalize().unwrap();
         let path = root.to_str().unwrap().to_owned();
-        let mut app = application(
-            Some(profile.clone()),
-            Some(tmp.0.clone()),
-            "Fixture".into(),
-            None,
-        )
-        .unwrap();
+        let mut app =
+            application(Some(profile.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut app, move |sim| {
             sim.click("＋ Add project").expect("open source picker");
             sim.click("Local folder")
@@ -397,7 +429,7 @@ mod ui_tests {
         assert!(fs::read_dir(&root).unwrap().next().is_none());
         drop(app);
         let mut reopened =
-            application(Some(profile), Some(tmp.0.clone()), "Fixture".into(), None).unwrap();
+            application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut reopened, |sim| {
             sim.click("Native test folder")
                 .expect("reopened UI displays the imported project");
@@ -415,8 +447,7 @@ mod ui_tests {
         let profile = tmp.0.join("profile");
         fs::create_dir_all(&root).unwrap();
         Profile::new(&profile).complete_onboarding().unwrap();
-        let mut app =
-            application(Some(profile.clone()), Some(home), "Fixture".into(), None).unwrap();
+        let mut app = application(Some(profile.clone()), Some(home), "Fixture".into()).unwrap();
         interact(&mut app, |sim| {
             sim.click("＋ Add project").unwrap();
             sim.click("Local folder").unwrap();
@@ -433,13 +464,8 @@ mod ui_tests {
         let tmp = Fixture::new();
         let profile = tmp.0.join("profile");
         Profile::new(&profile).complete_onboarding().unwrap();
-        let mut app = application(
-            Some(profile.clone()),
-            Some(tmp.0.clone()),
-            "Fixture".into(),
-            None,
-        )
-        .unwrap();
+        let mut app =
+            application(Some(profile.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut app, |sim| {
             sim.click("Start without a project").unwrap();
             sim.click("Open provider settings").unwrap();
@@ -472,16 +498,12 @@ mod ui_tests {
             .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
             .collect::<Vec<_>>();
         assert_eq!(records.len(), 1);
-        let id = uuid::Uuid::parse_str(records[0].file_stem().unwrap().to_str().unwrap()).unwrap();
         drop(app);
-        let mut reopened = application(
-            Some(profile),
-            Some(tmp.0.clone()),
-            "Fixture".into(),
-            Some(id),
-        )
-        .unwrap();
+        let mut reopened =
+            application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
         interact(&mut reopened, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open thread: Check my draft").unwrap();
             sim.click("Check my draft").unwrap();
             sim.click("Offline test reply received.").unwrap();
         });
