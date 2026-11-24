@@ -71,6 +71,8 @@ capture_one() (
     await_text "$window" "$out/$name-startup.png" 'ParityFixture'
   elif [[ "$name" == butler-created-project-reopened ]]; then
     await_new_project_workspace "$window" "$out/$name-startup.png"
+  elif [[ "$name" == butler-thread-chooser ]]; then
+    await_thread_draft "$window" "$out/$name-startup.png" 'Project Beta'
   else
     await_text "$window" "$out/$name-startup.png" 'What should we work on' '465x103+535+355'
   fi
@@ -167,6 +169,8 @@ capture_one() (
     create_native_project "$window" "$runtime/state/butler"
   elif [[ "$name" == butler-created-project-reopened ]]; then
     assert_new_project_files "$runtime/state/butler"
+  elif [[ "$name" == butler-thread-chooser ]]; then
+    capture_native_thread_chooser "$window" "$runtime"
   fi
 )
 
@@ -532,15 +536,15 @@ project_literal() {
 
 git_destination_frame() {
   local app=$1 frame=$2 destination=$3 remote=$4
-  # Measured on both native destination frames from run 45372807801. The
+  # Measured on both native destination frames, most recently run 45374623866. The
   # wide palette crop confused single-line OCR with borders, and its left
   # edge clipped the Repository heading. Read each row on its own instead.
-  local remote_crop='345x22+390+177' browse_crop='180x21+363+204' action='Clone'
+  local remote_crop='345x22+390+177' browse_crop='180x21+363+204' action='Create&Clone'
   if [[ "$app" == t3 ]]; then
     remote_crop='345x22+390+189'
     browse_crop='180x21+363+224'
-    # A vacant path shows Create & Clone in pinned T3 (and its Enter
-    # shortcut badge); Butler's review button is simply Clone.
+    # Both apps show Create & Clone for the vacant fixture. At this step
+    # pinned T3 also shows an Enter shortcut badge; Butler does not.
     action='Create&CloneEnter'
   fi
   project_literal "$frame" '132x26+390+92' "$destination" 7 &&
@@ -661,6 +665,140 @@ verify_git_url_review_pairs() {
   done
 }
 
+await_thread_draft() {
+  local window=$1 file=$2 title=$3 tick
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$file" || return 1
+    if settings_phrase "$file" '280x36+284+2' "$title New thread" 7 >/dev/null &&
+       settings_phrase "$file" '600x64+295+333' \
+         'Enable a provider in Settings to send a message' 7 >/dev/null; then
+      return 0
+    fi
+    sleep 0.4
+  done
+  printf 'Could not verify the %s fresh draft and provider gate in %s\n' "$title" "$file" >&2
+  return 1
+}
+
+thread_chooser_registry() {
+  local runtime=$1 first=$2 second=$3 title
+  for title in "$first" "$second"; do
+    printf '%s/fixtures/draft-%s-fixture\ntitle\t"Project %s"\n' "$runtime" "${title,,}" "$title"
+  done
+}
+
+thread_chooser_snapshot() (
+  cd -- "$1/fixtures" || return 1
+  # Directories must not get new children or metadata changes. Ctime/mtime
+  # and the sentinel hashes catch writes without treating ordinary reads as writes.
+  find . -printf '%P\t%y\t%m\t%s\t%T@\t%C@\n' | LC_ALL=C sort
+  sha256sum -- draft-alpha-fixture/fixture.txt draft-beta-fixture/fixture.txt
+)
+
+capture_native_thread_chooser() {
+  local window=$1 runtime tick coords x y frame
+  runtime=$(realpath -e -- "$2") || return 1
+  local profile="$runtime/state/butler" prefix="$out/butler-thread-chooser"
+  local input_crop='395x40+389+84' rows_crop='500x102+383+154'
+  local placeholder='New thread in' alpha='Project Alpha' beta='Project Beta'
+  # New thread is the rightmost glyph-only control in the 255px sidebar.
+  # empty_workspace.rs uses a 12px right spacer, a 28px button and a
+  # 48px Search row below the 40px title. The previous real project-open
+  # frame shows the same gutter. Gate this source-derived click on Search
+  # in the active project draft, and require the chooser after clicking.
+  settings_phrase "$prefix-startup.png" '164x40+15+44' 'Search' 7 >/dev/null || {
+    echo 'Could not confirm the active sidebar Search row before the New thread glyph click' >&2
+    return 1
+  }
+  xdotool windowfocus "$window" mousemove --window "$window" 229 64 click 1 || return 1
+  xdotool mousemove 1390 890 || return 1
+  frame="$prefix-choices.png"
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$frame" || return 1
+    coords=$(settings_phrase "$frame" "$input_crop" "$placeholder" 7) || coords=
+    if [[ -n "$coords" ]] &&
+       settings_phrase "$frame" '160x27+363+129' 'Projects' 7 >/dev/null &&
+       settings_phrase "$frame" "$rows_crop" "$alpha" 11 >/dev/null &&
+       settings_phrase "$frame" "$rows_crop" "$beta" 11 >/dev/null; then
+      break
+    fi
+    sleep 0.4
+  done
+  if (( tick == 15 )); then
+    echo 'Could not verify the New thread in… chooser and both fixtures' >&2
+    return 1
+  fi
+
+  read -r x y <<<"$coords"
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 || return 1
+  xdotool type --clearmodifiers 'ALPHA' || return 1
+  xdotool mousemove 1390 890 || return 1
+  frame="$prefix-filtered.png"
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$frame" || return 1
+    coords=$(settings_phrase "$frame" "$rows_crop" "$alpha" 11) || coords=
+    if [[ -n "$coords" ]] && project_literal "$frame" "$input_crop" 'ALPHA' 7 &&
+       ! settings_phrase "$frame" "$rows_crop" "$beta" 11 >/dev/null; then
+      break
+    fi
+    sleep 0.4
+  done
+  if (( tick == 15 )); then
+    echo 'Could not verify the case-insensitive ALPHA filter and exact visible row' >&2
+    return 1
+  fi
+  [[ "$(cat -- "$profile/local-projects")" == "$(thread_chooser_registry "$runtime" Beta Alpha)" ]] || {
+    echo 'The saved project order or titles unexpectedly changed before selecting a result' >&2
+    return 1
+  }
+
+  # The only click after filtering is the verified project’s OCR hitbox.
+  read -r x y <<<"$coords"
+  xdotool windowfocus "$window" mousemove --window "$window" "$x" "$y" click 1 || return 1
+  xdotool mousemove 1390 890 || return 1
+  await_thread_draft "$window" "$prefix-selected.png" "$alpha" || return 1
+  [[ "$(cat -- "$profile/local-projects")" == "$(thread_chooser_registry "$runtime" Alpha Beta)" ]] &&
+    [[ ! -e "$profile/threads" && ! -e "$profile/scratch" ]] || {
+      echo 'Draft rendered, but saved projects (order/titles) or no-send state did not match' >&2
+      return 1
+    }
+}
+
+verify_native_thread_chooser() {
+  local name='butler-thread-chooser' runtime profile before after rc
+  local notes="$out/butler-thread-chooser-notes.txt" marker="$out/butler-thread-chooser-unverified"
+  runtime=$(realpath -m "$tmp/$name") || return 1
+  profile="$runtime/state/butler"
+  touch "$marker"
+  printf '%s\n' \
+    'Native X11 New thread chooser, with two untouched local fixtures seeded in a fresh profile.' \
+    'Starts on Project Beta; both named rows must render; ALPHA must filter to Project Alpha without switching until clicked.' \
+    'The selected project must open an unsent draft with its provider gate, become most recent, and preserve both display titles.' \
+    'No provider, message or remote project action is used. If the unverified marker exists, all frames are diagnostic only.' \
+    >"$notes"
+  mkdir -p -m 700 "$profile" "$runtime/fixtures"/{draft-alpha-fixture,draft-beta-fixture}
+  printf '%s\n' 'butler-onboarding-complete-v1' >"$profile/onboarding"
+  thread_chooser_registry "$runtime" Beta Alpha >"$profile/local-projects"
+  printf '%s\n' 'Alpha read-only fixture' >"$runtime/fixtures/draft-alpha-fixture/fixture.txt"
+  printf '%s\n' 'Beta read-only fixture' >"$runtime/fixtures/draft-beta-fixture/fixture.txt"
+  before=$(thread_chooser_snapshot "$runtime") || return 1
+  set +e
+  CAPTURE_PROFILE="$name" capture_one "$name" "$butler"
+  rc=$?
+  set -e
+  after=$(thread_chooser_snapshot "$runtime") || return 1
+  if [[ "$before" != "$after" ]]; then
+    echo 'The chooser changed a fixture tree; native verification failed' | tee -a "$notes" >&2
+    return 1
+  fi
+  if (( rc != 0 )); then
+    echo 'Requested native thread chooser smoke failed; see the unverified marker' | tee -a "$notes" >&2
+    return 1
+  fi
+  rm -f -- "$marker"
+  echo 'Verified native chooser choices, filter, fresh draft, saved project order/titles, and unchanged fixture trees' | tee -a "$notes"
+}
+
 set +e
 capture_one t3 "$t3/AppRun"
 reference_rc=$?
@@ -746,4 +884,7 @@ if [[ "${CAPTURE_T3_NEW_PROJECT_FORM:-0}" == 1 ]]; then
 fi
 if [[ "${CAPTURE_GIT_URL_REVIEW:-0}" == 1 ]]; then
   verify_git_url_review_pairs
+fi
+if [[ "${VERIFY_BUTLER_THREAD_CHOOSER:-0}" == 1 ]]; then
+  verify_native_thread_chooser
 fi
