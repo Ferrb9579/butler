@@ -1,7 +1,8 @@
 //! Draft immediately after "Start without a project" on a profile with no provider.
 //! Reference: T3 Code v0.1.11 desktop, native fixture 45329928604.
 
-use crate::message_search::{MessageSource, Results};
+use crate::message_jump::Jump;
+use crate::message_search::{MessageHit, MessageSource, Results};
 use crate::settings_icons::icon;
 use crate::sidebar_search::{self, Search};
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
@@ -15,10 +16,12 @@ pub fn draft(
     history: Vec<ThreadSummary>,
     messages: Results,
     selected: Option<Conversation>,
+    jump: Option<Jump>,
+    jump_state: Signal<Option<Jump>>,
     history_error: Option<String>,
     search: Search,
     add_project: Option<impl Fn() + Clone + 'static>,
-    open_thread: impl Fn(uuid::Uuid) + Clone + 'static,
+    open_thread: impl Fn(uuid::Uuid, Option<(MessageHit, String)>) + Clone + 'static,
     new_thread: impl Fn() + Clone + 'static,
     open_settings: impl Fn() + Clone + 'static,
     #[cfg(test)] offline: Option<OfflineDraft>,
@@ -58,12 +61,17 @@ pub fn draft(
         } else {
             None
         };
+        let message_rows = rows
+            .iter()
+            .filter_map(|(row, hit)| hit.map(|hit| (row.id, hit.clone())))
+            .collect::<std::collections::HashMap<_, _>>();
         let mut threads = rows
             .into_iter()
             .map(|(thread, hit)| {
                 let id = thread.id;
                 let open_thread = open_thread.clone();
                 let clear = search.clone();
+                let seed = hit.cloned().map(|hit| (hit, search.query()));
                 let content = if active {
                     Widget::from(
                         Text::new(&thread.title)
@@ -115,7 +123,7 @@ pub fn draft(
                     )
                     .on_click(move || {
                         clear.reset();
-                        open_thread(id);
+                        open_thread(id, seed.clone());
                     });
                 if active {
                     let hover = search.clone();
@@ -150,12 +158,21 @@ pub fn draft(
             threads.push(label(error, 12.0, FontWeight::W400, MUTED));
         }
         let choose_thread = open_thread.clone();
+        let query = search.query();
         sidebar(
             project.as_deref(),
             add_project.clone(),
             Some(new_thread.clone()),
             sidebar_settings.clone(),
-            Some(sidebar_search::field(search.clone(), ids, choose_thread)),
+            Some(sidebar_search::field(search.clone(), ids, move |id| {
+                choose_thread(
+                    id,
+                    message_rows
+                        .get(&id)
+                        .cloned()
+                        .map(|hit| (hit, query.clone())),
+                );
+            })),
             threads,
         )
     });
@@ -194,6 +211,9 @@ pub fn draft(
                                 .padding(EdgeInsets::symmetric(margin, 0.0))
                                 .child(Container::new().width(composer_width).child(transcript(
                                     turn,
+                                    jump.as_ref(),
+                                    jump_state.clone(),
+                                    composer_width,
                                     #[cfg(test)]
                                     offline.clone(),
                                 )))
@@ -322,19 +342,31 @@ fn offline_composer(title: &str, draft: OfflineDraft) -> Widget {
         .into()
 }
 
-fn transcript(turn: &Conversation, #[cfg(test)] offline: Option<OfflineDraft>) -> Widget {
+fn transcript(
+    turn: &Conversation,
+    jump: Option<&Jump>,
+    jump_state: Signal<Option<Jump>>,
+    pane_width: f32,
+    #[cfg(test)] offline: Option<OfflineDraft>,
+) -> Widget {
     let mut messages = Vec::new();
     let pairs = std::iter::once((&turn.prompt, &turn.reply)).chain(
         turn.follow_ups
             .iter()
             .map(|exchange| (&exchange.prompt, &exchange.reply)),
     );
-    for (prompt, reply) in pairs {
+    for (index, (prompt, reply)) in pairs.enumerate() {
+        let row = |body, weight, role| match jump
+            .filter(|jump| jump.exchange == index && jump.source == role)
+        {
+            Some(jump) => marked_message(body, weight, jump),
+            None => label(body, 14.0, weight, INK),
+        };
         messages.extend([
             space(16.0),
-            label(prompt, 14.0, FontWeight::W500, INK),
+            row(prompt.as_str(), FontWeight::W500, MessageSource::User),
             space(12.0),
-            label(reply, 14.0, FontWeight::W400, INK),
+            row(reply.as_str(), FontWeight::W400, MessageSource::Assistant),
         ]);
     }
     let scroll = Expanded::new(SingleChildScrollView::new(
@@ -364,7 +396,85 @@ fn transcript(turn: &Conversation, #[cfg(test)] offline: Option<OfflineDraft>) -
     } else {
         rows
     };
-    Column::new(rows)
+    let transcript: Widget = Column::new(rows)
         .cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .into();
+    if let Some(jump) = jump {
+        Stack::new(vec![
+            Positioned::fill(transcript),
+            Positioned::new(jump_bar(
+                jump,
+                jump_state,
+                (pane_width - 24.0).clamp(1.0, 280.0),
+            ))
+            .top(12.0)
+            .right(12.0),
+        ])
+        .into()
+    } else {
+        transcript
+    }
+}
+
+fn marked_message(body: &str, weight: FontWeight, jump: &Jump) -> Widget {
+    let Some((range, matched)) = jump
+        .range
+        .as_ref()
+        .and_then(|range| body.get(range.clone()).map(|matched| (range, matched)))
+    else {
+        return label(body, 14.0, weight, INK).with_key(jump.key);
+    };
+    let base = TextStyle::new()
+        .font_family("Liberation Sans")
+        .font_size(14.0)
+        .font_weight(weight)
+        .color(INK);
+    let active = base
+        .clone()
+        .color(Color::rgba(33, 24, 10, 255))
+        .background_color(Color::rgba(238, 165, 43, 255));
+    let paragraph: Widget = RichText::new(TextSpan::empty().style(base).children([
+        TextSpan::new(&body[..range.start]),
+        TextSpan::new(matched).style(active),
+        TextSpan::new(&body[range.end..]),
+    ]))
+    .into();
+    paragraph.with_key(jump.key)
+}
+
+fn jump_bar(jump: &Jump, state: Signal<Option<Jump>>, width: f32) -> Widget {
+    Container::new()
+        .width(width)
+        .height(36.0)
+        .padding(EdgeInsets::symmetric(8.0, 0.0))
+        .decoration(
+            BoxDecoration::new()
+                .color(WHITE)
+                .border(Border::new(1.0, RULE))
+                .border_radius(BorderRadius::circular(8.0)),
+        )
+        .child(
+            Row::new(vec![
+                Widget::from(Expanded::new(
+                    Text::new(&jump.query)
+                        .style(crate::typography::interface().font_size(14.0).color(INK))
+                        .max_lines(Some(1))
+                        .overflow(TextOverflow::Ellipsis),
+                )),
+                Button::with_child("Close thread find", icon("x", 14.0, MUTED))
+                    .style(
+                        ButtonStyle::new()
+                            .variant(ButtonVariant::Ghost)
+                            .fixed_size(Size::new(24.0, 24.0))
+                            .padding(EdgeInsets::ZERO),
+                    )
+                    .on_click(move || {
+                        state.set(None);
+                    })
+                    .into(),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .spacing(6.0),
+        )
         .into()
 }

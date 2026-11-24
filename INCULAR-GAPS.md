@@ -56,6 +56,14 @@ When a gap affects Butler, record the Incular revision, platform or renderer if 
 
 **Butler effect / acceptance:** A composing Enter that reaches the runtime can cancel the provisional name text or trigger a focus-loss commit before the input method finishes. Distinguish raw input-method candidate handling from explicit completion when preedit is active. Verify that a candidate-selection Enter does not blur; the subsequent explicit completion or ordinary Enter with no composition still completes exactly once. A controlled native IME comparison is pending. No Butler interception or workaround.
 
+### IG-008: RichText ignores an inline span's text background
+
+**Status:** Display-list verified on pinned Incular. Flutter's [TextStyle.backgroundColor](https://api.flutter.dev/flutter/painting/TextStyle/backgroundColor.html) specifies paint behind the text, and [TextSpan](https://api.flutter.dev/flutter/painting/TextSpan-class.html) can override the style for only part of a paragraph. Incular's public TextStyle stores the background value, but the pinned [paragraph shaping style translation](https://github.com/FabortLabs/incular/blob/71feef92286dfd6f8accd9c17c14f292da746490/crates/incular-text/src/engine.rs#L2007-L2035) does not forward it.
+
+**Repro:** In a RichText paragraph, use three child TextSpans for “The Café ”, “lantern”, and “ is lit.” Set the middle span's foreground to RGBA (33, 24, 10, 255) and background to (238, 165, 43, 255). Run a retained frame. The middle span has a colored GlyphRun with its own shaped range, but the display list contains no corresponding amber paint behind it. A control inspection after scrolling confirms the colored run is on-screen, so visibility or clipping is not responsible. This observation is for the normal RichText path, not all forms of text painting.
+
+**Butler effect / acceptance:** Transcript search can reveal the message and style the matching foreground, but cannot show T3's contrasting inline background through the standard span API. Render the background only for the styled glyph range, without altering text shaping, selection, or wrapping, including a match crossing a line wrap. No Butler workaround.
+
 ## Investigations, not confirmed Incular gaps
 
 - Butler's compact scratch button clipped its label before switching from an outer width constraint to `ButtonStyle::fixed_size` ([native capture before the fix](https://github.com/Ferrb9579/butler/actions/runs/45329928604)). Reproduce the same widget constraints, font and padding in Flutter before blaming framework layout.

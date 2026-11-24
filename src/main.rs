@@ -1,10 +1,12 @@
 mod about_settings;
 mod empty_workspace;
+mod message_jump;
 mod message_search;
 mod project_picker;
 mod provider_settings;
 mod settings_icons;
 mod sidebar_search;
+mod thread_find;
 mod typography;
 mod ui;
 mod welcome;
@@ -24,7 +26,7 @@ use butler::{
 use incular::prelude::*;
 use project_picker::{Picker, ProjectRequest, RemoteFlow, ThreadProjects};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     env,
     path::{Path, PathBuf},
     rc::Rc,
@@ -102,6 +104,8 @@ fn application_with_transport(
     );
     let thread_history = Signal::new(initial_history.ok().flatten().unwrap_or_default());
     let selected_thread = Signal::new(None::<Conversation>);
+    let message_jump = Signal::new(None::<message_jump::Jump>);
+    let posted_message_jump = Cell::new(None);
     let picker_error = Signal::new(
         saved_project
             .err()
@@ -189,6 +193,15 @@ fn application_with_transport(
                 });
                 let selected = selected_thread.clone();
                 let new_draft = selected_thread.clone();
+                let jump_on_open = message_jump.clone();
+                let jump_on_new = message_jump.clone();
+                let current = selected_thread.get();
+                let jump = message_jump
+                    .get()
+                    .filter(|jump| current.as_ref().is_some_and(|turn| turn.id == jump.thread));
+                if let Some(jump) = &jump {
+                    jump.reveal(cx, &posted_message_jump);
+                }
                 let choose_project = thread_projects.clone();
                 let choose_step = picker.clone();
                 let choose_store = projects.clone();
@@ -221,11 +234,13 @@ fn application_with_transport(
                     title,
                     history,
                     messages,
-                    selected_thread.get(),
+                    current,
+                    jump,
+                    message_jump.clone(),
                     history_error.get(),
                     sidebar_search.clone(),
                     add_project,
-                    move |id| {
+                    move |id, seed| {
                         let outcome = (|| {
                             let store = store
                                 .as_ref()
@@ -242,6 +257,10 @@ fn application_with_transport(
                         match outcome {
                             Ok(turn) => {
                                 show_error.set(None);
+                                let jump = seed.and_then(|(hit, query)| {
+                                    message_jump::Jump::from_result(&turn, hit, &query)
+                                });
+                                jump_on_open.set(jump);
                                 selected.set(Some(turn));
                             }
                             Err(error) => {
@@ -262,6 +281,7 @@ fn application_with_transport(
                             choose_error.set(None);
                             choose_step.set(Picker::ThreadProjects);
                         } else {
+                            jump_on_new.set(None);
                             new_draft.set(None);
                         }
                     },
@@ -333,6 +353,7 @@ fn application_with_transport(
             let history_error = history_error.clone();
             let selected_thread = selected_thread.clone();
             let search_for_project = sidebar_search.clone();
+            let jump_for_project = message_jump.clone();
             #[cfg(test)]
             let fixture_for_project = fixture.clone();
             let finish_project = move |result: std::io::Result<(LocalProject, Option<String>)>,
@@ -360,6 +381,7 @@ fn application_with_transport(
                         thread_history.set(refreshed.ok().flatten().unwrap_or_default());
                         #[cfg(test)]
                         fixture_for_project.reset();
+                        jump_for_project.set(None);
                         selected_thread.set(None);
                         search_for_project.reset();
                         active_project.set(Some(project));
@@ -1075,6 +1097,104 @@ mod ui_tests {
             sim.press("ArrowDown".parse().unwrap()).unwrap();
             sim.press("Enter".parse().unwrap()).unwrap();
             sim.click("The graphite ledger shows a balance.").unwrap();
+            sim.focus("Close thread find").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            assert!(sim.focus("Close thread find").is_err());
+        });
+    }
+
+    #[test]
+    fn sidebar_message_hit_reveals_and_marks_a_follow_up_below_the_viewport() {
+        use butler::threads::Exchange;
+        use incular::rendering::PaintCommand;
+
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let project_path = tmp.0.join("Test project");
+        fs::create_dir(&project_path).unwrap();
+        let project = LocalProjects::new(&profile).open(&project_path).unwrap();
+        let store = ThreadStore::new(&profile);
+        let follow_ups = (0..40)
+            .map(|index| Exchange {
+                prompt: format!("Follow-up {index}"),
+                reply: if index == 36 {
+                    "The Café lantern is lit.".into()
+                } else {
+                    format!("Earlier or later reply {index}")
+                },
+            })
+            .collect();
+        for (title, follow_ups) in [
+            ("Saved history", follow_ups),
+            ("Unrelated history", Vec::new()),
+        ] {
+            let mut turn = Conversation {
+                id: uuid::Uuid::new_v4(),
+                workspace: Workspace::Local(project.root.clone()),
+                prompt: title.into(),
+                reply: "Initial reply".into(),
+                follow_ups: Vec::new(),
+            };
+            store.save(&turn).unwrap();
+            for exchange in follow_ups {
+                turn = store.append(&turn, exchange).unwrap();
+            }
+        }
+        let mut app = application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            sim.focus("Search threads").unwrap();
+            sim.type_text("cafe lantern").unwrap();
+            for _ in 0..70 {
+                if sim.focus("Open thread: Saved history").is_ok() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            sim.click("Open thread: Saved history").unwrap();
+            sim.focus("Close thread find").unwrap();
+        });
+        let window = app.active_window_ids()[0];
+        let size = Size::new(1280.0, 800.0);
+        let mut visible_marker = false;
+        for _ in 0..5 {
+            app.process_runtime_work();
+            let (list, _) = app
+                .run_window_frame_at(window, Constraints::tight(size), std::time::Instant::now())
+                .unwrap()
+                .unwrap();
+            let mut transforms = vec![incular::core::Transform::IDENTITY];
+            for command in list.commands() {
+                match command {
+                    PaintCommand::PushTransform { transform } => {
+                        transforms.push(transforms.last().unwrap().then(*transform));
+                    }
+                    PaintCommand::PopTransform => {
+                        transforms.pop();
+                    }
+                    PaintCommand::GlyphRun { run, color }
+                        if *color == Color::rgba(33, 24, 10, 255) =>
+                    {
+                        // The target occurrence's own glyphs, not its query label or a preceding reply.
+                        if let Some(first) = run.glyphs.first() {
+                            let origin = transforms
+                                .last()
+                                .unwrap()
+                                .transform_point(run.origin + first.offset);
+                            visible_marker |= origin.x > 255.0 && (40.0..800.0).contains(&origin.y);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            visible_marker,
+            "the measured transcript must display the marked follow-up"
+        );
+        interact(&mut app, |sim| {
+            sim.click("Open thread: Unrelated history").unwrap();
+            assert!(sim.focus("Close thread find").is_err());
         });
     }
 
