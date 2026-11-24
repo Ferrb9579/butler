@@ -1,7 +1,7 @@
 //! Local provider settings overlay. The canned provider is available to tests only.
 
 use crate::empty_workspace::{WHITE, space};
-use crate::settings_icons::icon;
+use crate::settings_icons::{icon, provider_brand};
 use crate::typography;
 use crate::ui::{Button, ButtonStyle, ButtonVariant};
 use butler::profile::{Profile, Provider};
@@ -377,6 +377,34 @@ fn nav(text: &str, selected: bool, compact: bool) -> Widget {
         .into()
 }
 
+fn provider_mark(provider: Provider) -> Widget {
+    Container::new()
+        .width(20.0)
+        .height(20.0)
+        .alignment(Alignment::CENTER)
+        .child(provider_brand(
+            provider.label(),
+            16.0,
+            Color::rgba(24, 24, 27, 204),
+            false,
+        ))
+        .into()
+}
+
+fn provider_name_label(name: &str, size: f32, height: f32, weight: FontWeight) -> Widget {
+    Text::new(name)
+        .style(
+            typography::interface()
+                .font_size(size)
+                .line_height_absolute(height)
+                .font_weight(weight)
+                .color(INK),
+        )
+        .max_lines(Some(1))
+        .overflow(TextOverflow::Ellipsis)
+        .into()
+}
+
 fn details(
     device: &str,
     layout: &ProviderGeometry,
@@ -432,33 +460,55 @@ fn details(
             } else {
                 "Disabled"
             };
-            let inner: Widget = ActionSurface::with_child(
-                Container::new()
-                    .padding(EdgeInsets::symmetric(
-                        if compact { 12.0 } else { 16.0 },
-                        12.0,
-                    ))
-                    .alignment(Alignment::CENTER_LEFT)
-                    .child(
-                        Column::new(vec![
-                            styled(name, 14.0, 20.0, FontWeight::W500, INK),
-                            styled(row_status, 12.0, 16.0, FontWeight::W400, SIDEBAR_MUTED),
-                        ])
-                        .main_axis_size(MainAxisSize::Min)
-                        .cross_axis_alignment(CrossAxisAlignment::Start),
-                    ),
+            let select_label = format!("Select {name}");
+            let row_selected = selected == index;
+            let text = Column::new(vec![
+                provider_name_label(name, 14.0, 20.0, FontWeight::W500),
+                space(2.0),
+                styled(row_status, 12.0, 18.0, FontWeight::W400, SIDEBAR_MUTED),
+            ])
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Start);
+            let inner = Widget::from(
+                ActionSurface::with_child(
+                    Container::new()
+                        .padding(EdgeInsets::symmetric(
+                            if compact { 12.0 } else { 16.0 },
+                            12.0,
+                        ))
+                        .alignment(Alignment::CENTER_LEFT)
+                        .child(
+                            Row::new(vec![
+                                provider_mark(Provider::ALL[index]),
+                                Expanded::new(text).into(),
+                            ])
+                            .spacing(12.0)
+                            .cross_axis_alignment(CrossAxisAlignment::Start),
+                        ),
+                )
+                .label(select_label.clone())
+                .size(Size::new(0.0, 71.0))
+                .mouse_cursor(incular::widgets::MouseCursor::Click)
+                .hover_color(if row_selected {
+                    Color::TRANSPARENT
+                } else {
+                    LIST_HOVER
+                })
+                .on_press(move || {
+                    selection.set(index);
+                }),
             )
-            .label(name.as_str())
-            .size(Size::new(0.0, 71.0))
-            .hover_color(if selected == index {
-                Color::TRANSPARENT
-            } else {
-                LIST_HOVER
-            })
-            .on_press(move || {
-                selection.set(index);
-            })
-            .into();
+            .semantics(
+                ExplicitSemantics::new(SemanticRole::Button)
+                    .label(select_label)
+                    .state(SemanticState {
+                        enabled: true,
+                        focusable: true,
+                        toggled: Some(row_selected),
+                        ..SemanticState::default()
+                    })
+                    .actions([SemanticActionKind::Focus, SemanticActionKind::Activate]),
+            );
             let toggle = names.clone();
             Container::new()
                 .height(71.0)
@@ -515,7 +565,19 @@ fn details(
         "Disabled"
     };
     let mut property_rows = vec![
-        styled(&saved[selected], 16.0, 24.0, FontWeight::W600, INK),
+        Row::new(vec![
+            provider_mark(Provider::ALL[selected]),
+            Expanded::new(provider_name_label(
+                &saved[selected],
+                16.0,
+                24.0,
+                FontWeight::W600,
+            ))
+            .into(),
+        ])
+        .spacing(8.0)
+        .cross_axis_alignment(CrossAxisAlignment::Center)
+        .into(),
         space(20.0),
         styled("Status", 14.0, 20.0, FontWeight::W500, INK),
         space(4.0),

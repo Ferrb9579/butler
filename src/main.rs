@@ -588,7 +588,7 @@ mod ui_tests {
             sim.key_up("ControlLeft".parse().unwrap()).unwrap();
             sim.type_text("Cursor Local").unwrap();
             sim.press("Enter".parse().unwrap()).unwrap();
-            sim.click("Cursor Local").unwrap();
+            sim.click("Select Cursor Local").unwrap();
         });
         assert_eq!(
             profile.provider_name(Provider::Cursor).unwrap(),
@@ -600,7 +600,7 @@ mod ui_tests {
         interact(&mut app, |sim| {
             sim.click("Start without a project").unwrap();
             sim.click("Open provider settings").unwrap();
-            sim.click("Cursor Local").unwrap();
+            sim.click("Select Cursor Local").unwrap();
         });
     }
 
@@ -649,7 +649,8 @@ mod ui_tests {
         interact(&mut app, |sim| {
             sim.click("Start without a project").unwrap();
             sim.click("Open provider settings").unwrap();
-            sim.click("Claude").unwrap();
+            sim.focus("Select Claude").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
             sim.click("Sign-in for Claude isn't available in this build.")
                 .unwrap();
             sim.click("Enable offline test provider").unwrap();
