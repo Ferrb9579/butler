@@ -9,9 +9,9 @@ use incular::{
     core::SECONDARY_POINTER_BUTTON,
     prelude::*,
     widgets::{
-        BackdropFilter, HitTestBehavior, Listener, MenuController, RawMenuAnchor, RawTooltip,
-        RawTooltipTriggerMode, TapRegionGroupId, TransientDismissPolicy,
-        internal::ExplicitSemantics,
+        BackdropFilter, HitTestBehavior, Listener, MenuController, RawMenuAnchor,
+        RawMenuAnchorGroup, RawTooltip, RawTooltipTriggerMode, TapRegionGroupId,
+        TransientDismissPolicy, internal::ExplicitSemantics,
     },
 };
 use std::{
@@ -35,7 +35,28 @@ const POPOVER_WINDOW_RESERVE: f32 = 104.0;
 const GLASS: Color = Color::rgba(255, 255, 255, 213);
 const BORDER: Color = Color::rgba(24, 24, 27, 26);
 pub const TOGGLE: &str = "Toggle thread details panel";
-const COPY_PATH: &str = "Copy full path";
+
+#[derive(Clone, Copy)]
+enum CopyAction {
+    WorkspacePath,
+    BranchName,
+}
+
+impl CopyAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::WorkspacePath => "Copy full path",
+            Self::BranchName => "Copy branch name",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::WorkspacePath => "workspace-path",
+            Self::BranchName => "branch-name",
+        }
+    }
+}
 
 /// Connects row actions to their owning App window's real clipboard. No system
 /// clipboard is opened or written while building the layout.
@@ -56,7 +77,7 @@ impl ClipboardWriter {
                 .write_clipboard(DataTransfer::plain_text(text))
                 .is_ok_and(|report| report.written.contains(&TransferFormat::PlainText))
             {
-                eprintln!("Butler could not copy the workspace path to the clipboard.");
+                eprintln!("Butler could not copy the requested text to the clipboard.");
             }
         });
     }
@@ -483,7 +504,7 @@ impl LocalDetails {
         self.card_with_height(f32::INFINITY, false)
     }
 
-    fn workspace_path_menu(&self, row: Widget, path: String) -> Widget {
+    fn copy_menu(&self, row: Widget, action: CopyAction, value: String) -> Widget {
         let menu = MenuController::new();
         let close = menu.clone();
         let clipboard = self.clipboard.clone();
@@ -502,8 +523,8 @@ impl LocalDetails {
             );
             let click = close.clone();
             let clipboard = clipboard.clone();
-            let path = path.clone();
-            let row = Button::new(COPY_PATH)
+            let value = value.clone();
+            let row = Button::new(action.label())
                 .style(
                     ButtonStyle::new()
                         .variant(ButtonVariant::Ghost)
@@ -519,7 +540,7 @@ impl LocalDetails {
                 )
                 .on_click(move || {
                     click.close();
-                    clipboard.write(path.clone());
+                    clipboard.write(value.clone());
                 });
             let panel = Container::new()
                 .height(height)
@@ -550,7 +571,8 @@ impl LocalDetails {
                 })
                 .into()
         });
-        Widget::from(popup).with_key(self.presentation.revision)
+        Widget::from(popup)
+            .with_key(format!("{}-{}", action.key(), self.presentation.revision).as_str())
     }
 
     fn card_with_height(&self, max_height: f32, dialog: bool) -> Widget {
@@ -592,11 +614,11 @@ impl LocalDetails {
         // don't mount a nested menu that would close compact details too.
         // A non-UTF-8 path also has no exact plain-text encoding.
         let row = if !dialog && let Some(path) = self.path.to_str() {
-            self.workspace_path_menu(row, path.to_owned())
+            self.copy_menu(row, CopyAction::WorkspacePath, path.to_owned())
         } else {
             row
         };
-        let (sections, content_height) = self.card_sections(row);
+        let (sections, content_height) = self.card_sections(row, !dialog);
         let body = Container::new()
             .width(WIDTH)
             .constraints(Constraints::new(0.0, WIDTH, 0.0, max_height))
@@ -625,17 +647,44 @@ impl LocalDetails {
         .into()
     }
 
-    fn card_sections(&self, workspace: Widget) -> (Widget, f32) {
+    fn card_sections(&self, workspace: Widget, contextual_copy: bool) -> (Widget, f32) {
         let section = |row: Widget| -> Widget {
             Container::new()
                 .padding(EdgeInsets::from_ltrb(8.0, 8.0, 8.0, 10.0))
                 .child(row)
                 .into()
         };
-        let workspace = section(workspace);
-        let Some(branch) = &self.branch else {
-            return (workspace, 52.0);
+        let mut sections = vec![section(workspace)];
+        if let Some(branch) = &self.branch {
+            let row = Self::branch_row(branch);
+            let row = if contextual_copy {
+                self.copy_menu(row, CopyAction::BranchName, branch.clone())
+            } else {
+                row
+            };
+            sections.push(
+                Container::new()
+                    .height(1.0)
+                    .color(Color::rgba(24, 24, 27, 17))
+                    .into(),
+            );
+            sections.push(section(row));
+        }
+        let content_height = if sections.len() == 1 { 52.0 } else { 103.0 };
+        let content = Column::new(sections)
+            .main_axis_size(MainAxisSize::Min)
+            .cross_axis_alignment(CrossAxisAlignment::Stretch);
+        let content = if contextual_copy {
+            // Secondary-clicking the other row replaces, rather than stacks,
+            // the first row's context menu.
+            Widget::from(RawMenuAnchorGroup::new(MenuController::new(), content))
+        } else {
+            content.into()
         };
+        (content, content_height)
+    }
+
+    fn branch_row(branch: &str) -> Widget {
         let caption = Text::new(branch)
             .style(
                 typography::interface()
@@ -646,7 +695,7 @@ impl LocalDetails {
             )
             .max_lines(Some(1))
             .overflow(TextOverflow::Ellipsis);
-        let branch = Widget::from(
+        Widget::from(
             Container::new()
                 .height(32.0)
                 .padding(EdgeInsets::symmetric(10.0, 0.0))
@@ -660,21 +709,7 @@ impl LocalDetails {
                     .cross_axis_alignment(CrossAxisAlignment::Center),
                 ),
         )
-        .semantics(ExplicitSemantics::new(SemanticRole::Text).label(format!("Branch: {branch}")));
-        (
-            Column::new([
-                workspace,
-                Container::new()
-                    .height(1.0)
-                    .color(Color::rgba(24, 24, 27, 17))
-                    .into(),
-                section(branch),
-            ])
-            .main_axis_size(MainAxisSize::Min)
-            .cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .into(),
-            103.0,
-        )
+        .semantics(ExplicitSemantics::new(SemanticRole::Text).label(format!("Branch: {branch}")))
     }
 }
 

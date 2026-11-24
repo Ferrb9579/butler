@@ -102,6 +102,11 @@ controls, and text shaping/rendering comparisons are still unverified.
   branch. This is a read-only selection/open snapshot, not the branch
   selector, detached fallback, external checkout live refresh, or
   mid-label truncation. No branch or Git action is simulated.
+- On the wide named branch row, the pinned `BranchToolbarBranchSelector.tsx`
+  **Copy branch name** context action copies the exact displayed branch name
+  only when selected. It shares the workspace row's real clipboard route
+  and does not run another Git command or open a picker. Compact still
+  omits nested menus (IG-010).
 
 ### Saved-thread composer, without a provider
 

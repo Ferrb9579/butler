@@ -2090,21 +2090,44 @@ mod ui_tests {
 
     #[test]
     fn selected_named_branch_is_read_only_text_in_wide_and_compact_details() {
-        use incular::platform::{PhysicalSize, PlatformEvent, WindowMetrics};
+        use incular::{
+            core::{
+                InputEvent, PointerDeviceKind, PointerPhase, PointerSampleMetadata,
+                SECONDARY_POINTER_BUTTON,
+            },
+            platform::{
+                PhysicalSize, PlatformEvent, TransferFormat, TransferReadRequest, WindowMetrics,
+            },
+        };
+        const BRANCH: &str = "topic/café-和-e\u{301}";
+        const COPY_BRANCH: &str = "Copy branch name";
+        const COPY_PATH: &str = "Copy full path";
         let tmp = Fixture::new();
         let state = tmp.0.join("profile");
         let folder = tmp.0.join("Branch Fixture");
+        let plain_folder = tmp.0.join("Plain Fixture");
         fs::create_dir(&folder).unwrap();
-        let project = LocalProjects::new(&state).open(&folder).unwrap();
+        fs::create_dir(&plain_folder).unwrap();
+        let projects = LocalProjects::new(&state);
+        let plain = projects.open(&plain_folder).unwrap();
+        let project = projects.open(&folder).unwrap();
         Profile::new(&state).complete_onboarding().unwrap();
         let thread = Conversation {
             id: uuid::Uuid::new_v4(),
-            workspace: Workspace::Local(project.root),
+            workspace: Workspace::Local(project.root.clone()),
             prompt: "Branch details fixture".into(),
             reply: "Local only".into(),
             follow_ups: Vec::new(),
         };
+        let plain_thread = Conversation {
+            id: uuid::Uuid::new_v4(),
+            workspace: Workspace::Local(plain.root),
+            prompt: "Other saved workspace".into(),
+            reply: "Local only".into(),
+            follow_ups: Vec::new(),
+        };
         let store = ThreadStore::new(&state);
+        store.save(&plain_thread).unwrap();
         store.save(&thread).unwrap();
         let mut app = application_with_services(
             Some(state),
@@ -2115,7 +2138,7 @@ mod ui_tests {
             // repositories; the test container remaps system binary ownership.
             branch_lookup::Lookup::with_probe(|root| {
                 (root.file_name().and_then(|name| name.to_str()) == Some("Branch Fixture"))
-                    .then(|| "feature/named".to_owned())
+                    .then(|| BRANCH.to_owned())
             }),
         )
         .unwrap();
@@ -2137,7 +2160,8 @@ mod ui_tests {
                     let Some(node) = semantics.node(id) else {
                         continue;
                     };
-                    if node.label.as_deref() == Some("Branch: feature/named") {
+                    if node.label.as_deref() == Some(concat!("Branch: ", "topic/café-和-e\u{301}"))
+                    {
                         send.send(Some(node.role)).unwrap();
                         return;
                     }
@@ -2148,6 +2172,50 @@ mod ui_tests {
             app.process_runtime_work();
             receive.try_recv().unwrap()
         };
+        let right_click = |app: &mut Application, position, width| {
+            for phase in [PointerPhase::Down, PointerPhase::Up] {
+                app.handle_window_event(WindowEvent::platform(
+                    window,
+                    PlatformEvent::Input(InputEvent::PointerWithMetadata {
+                        pointer: 0,
+                        device: 1,
+                        kind: PointerDeviceKind::Mouse,
+                        buttons: if phase == PointerPhase::Down {
+                            SECONDARY_POINTER_BUTTON
+                        } else {
+                            0
+                        },
+                        button: Some(SECONDARY_POINTER_BUTTON),
+                        sample: PointerSampleMetadata::default(),
+                        phase,
+                        position,
+                    }),
+                ));
+            }
+            for _ in 0..3 {
+                branch_role(app, width);
+            }
+        };
+        let clipboard = |app: &mut Application| {
+            let (send, receive) = std::sync::mpsc::channel();
+            app.dispatch(move |runtime| {
+                let data = runtime
+                    .read_clipboard(TransferReadRequest::format(TransferFormat::PlainText))
+                    .unwrap();
+                send.send(data.plain_text_value().unwrap().unwrap().to_string())
+                    .unwrap();
+            });
+            app.process_runtime_work();
+            receive.try_recv().unwrap()
+        };
+        let menu_count = |app: &Application| {
+            app.transient_surfaces(window)
+                .iter()
+                .filter(|s| s.role == TransientRole::Menu)
+                .count()
+        };
+        let wide_branch = Offset::new(1060.0, 124.0);
+        let wide_path = Offset::new(1060.0, 75.0);
         let wait_for_branch = |app: &mut Application, width| {
             for _ in 0..500 {
                 if let Some(role) = branch_role(app, width) {
@@ -2159,10 +2227,44 @@ mod ui_tests {
             panic!("named branch did not reach its visible details row");
         };
         assert_eq!(branch_role(&mut app, 1280.0), None);
+        app.dispatch(|runtime| runtime.set_clipboard_text("keep this"));
+        right_click(&mut app, wide_branch, 1280.0);
+        assert_eq!(menu_count(&app), 0);
         interact(&mut app, |sim| {
             sim.click("Open thread: Branch details fixture").unwrap()
         });
         wait_for_branch(&mut app, 1280.0);
+        interact(&mut app, move |sim| sim.click_at(wide_branch).unwrap());
+        assert_eq!(clipboard(&mut app), "keep this");
+        right_click(&mut app, wide_branch, 1280.0);
+        assert_eq!(menu_count(&app), 1);
+        assert_eq!(clipboard(&mut app), "keep this");
+        interact(&mut app, |sim| {
+            sim.focus(COPY_BRANCH).unwrap();
+            assert!(sim.focus(COPY_PATH).is_err());
+            sim.press(Code::Escape).unwrap();
+        });
+        branch_role(&mut app, 1280.0);
+        assert_eq!(menu_count(&app), 0);
+        assert_eq!(clipboard(&mut app), "keep this");
+        right_click(&mut app, wide_branch, 1280.0);
+        interact(&mut app, |sim| {
+            sim.click_at(Offset::new(400.0, 310.0)).unwrap()
+        });
+        branch_role(&mut app, 1280.0);
+        assert_eq!(menu_count(&app), 0);
+        assert_eq!(clipboard(&mut app), "keep this");
+        right_click(&mut app, wide_branch, 1280.0);
+        right_click(&mut app, wide_path, 1280.0);
+        assert_eq!(menu_count(&app), 1);
+        interact(&mut app, |sim| {
+            assert!(sim.focus(COPY_BRANCH).is_err());
+            sim.click(COPY_PATH).unwrap();
+        });
+        assert_eq!(clipboard(&mut app), project.root.to_str().unwrap());
+        right_click(&mut app, wide_branch, 1280.0);
+        interact(&mut app, |sim| sim.click(COPY_BRANCH).unwrap());
+        assert_eq!(clipboard(&mut app), BRANCH);
         app.handle_window_event(WindowEvent::platform(
             window,
             PlatformEvent::Metrics(WindowMetrics::new(PhysicalSize::new(1000, 800), 1.0)),
@@ -2170,8 +2272,100 @@ mod ui_tests {
         assert_eq!(branch_role(&mut app, 1000.0), None);
         interact(&mut app, |sim| sim.click(thread_details::TOGGLE).unwrap());
         wait_for_branch(&mut app, 1000.0);
+        right_click(&mut app, Offset::new(780.0, 120.0), 1000.0);
+        assert_eq!(menu_count(&app), 0);
+        assert_eq!(clipboard(&mut app), BRANCH);
+        app.handle_window_event(WindowEvent::platform(
+            window,
+            PlatformEvent::Metrics(WindowMetrics::new(PhysicalSize::new(1280, 800), 1.0)),
+        ));
+        wait_for_branch(&mut app, 1280.0);
+        right_click(&mut app, wide_branch, 1280.0);
+        assert_eq!(menu_count(&app), 1);
+        interact(&mut app, |sim| {
+            sim.click("New thread").unwrap();
+            sim.click("New thread in Plain Fixture").unwrap();
+            sim.click("Open thread: Other saved workspace").unwrap();
+        });
+        right_click(&mut app, wide_branch, 1280.0);
+        assert_eq!(menu_count(&app), 0);
+        assert_eq!(branch_role(&mut app, 1280.0), None);
+        assert_eq!(clipboard(&mut app), BRANCH);
         assert_eq!(fs::read_dir(folder).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(plain_folder).unwrap().count(), 0);
         assert_eq!(store.load(thread.id).unwrap(), Some(thread));
+        assert_eq!(store.load(plain_thread.id).unwrap(), Some(plain_thread));
+    }
+
+    #[test]
+    fn saved_scratch_has_no_branch_probe_or_copy_menu() {
+        use incular::{
+            core::{
+                InputEvent, PointerDeviceKind, PointerPhase, PointerSampleMetadata,
+                SECONDARY_POINTER_BUTTON,
+            },
+            platform::PlatformEvent,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        Profile::new(&state).complete_onboarding().unwrap();
+        let turn = Conversation {
+            id: uuid::Uuid::new_v4(),
+            workspace: Workspace::Scratch,
+            prompt: "Saved scratch fixture".into(),
+            reply: "Local only".into(),
+            follow_ups: Vec::new(),
+        };
+        let checkout = butler::scratch::ScratchWorkspaces::new(&state)
+            .prepare(turn.id, "2026-11-24", &turn.prompt)
+            .unwrap();
+        let store = ThreadStore::new(&state);
+        store.save(&turn).unwrap();
+        let mut app = application_with_services(
+            Some(state),
+            Some(tmp.0.clone()),
+            "Local fixture".into(),
+            clone_runner::clone_https,
+            branch_lookup::Lookup::with_probe(|_| {
+                CALLS.fetch_add(1, Ordering::Relaxed);
+                Some("never-shown".into())
+            }),
+        )
+        .unwrap();
+        let window = app.active_window_ids()[0];
+        interact(&mut app, |sim| {
+            sim.click("Start without a project").unwrap();
+            sim.click("Open thread: Saved scratch fixture").unwrap();
+            assert!(sim.focus(thread_details::TOGGLE).is_err());
+        });
+        let position = Offset::new(1060.0, 124.0);
+        for phase in [PointerPhase::Down, PointerPhase::Up] {
+            app.handle_window_event(WindowEvent::platform(
+                window,
+                PlatformEvent::Input(InputEvent::PointerWithMetadata {
+                    pointer: 0,
+                    device: 1,
+                    kind: PointerDeviceKind::Mouse,
+                    buttons: if phase == PointerPhase::Down {
+                        SECONDARY_POINTER_BUTTON
+                    } else {
+                        0
+                    },
+                    button: Some(SECONDARY_POINTER_BUTTON),
+                    sample: PointerSampleMetadata::default(),
+                    phase,
+                    position,
+                }),
+            ));
+        }
+        interact(&mut app, |sim| {
+            assert!(sim.focus("Copy branch name").is_err())
+        });
+        assert_eq!(CALLS.load(Ordering::Relaxed), 0);
+        assert_eq!(fs::read_dir(checkout).unwrap().count(), 0);
+        assert_eq!(store.load(turn.id).unwrap(), Some(turn));
     }
 
     #[test]
