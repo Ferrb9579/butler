@@ -244,21 +244,23 @@ assert_disabled_cursor() {
 # phrase's Tesseract bounding box back to X11 client coordinates. This avoids
 # hard-coding row/button positions that differ between the two apps.
 settings_ocr() {
-  local file=$1 crop=$2 psm=$3
+  local file=$1 crop=$2 psm=$3 channel=${4:-gray}
+  local -a grayscale=(-colorspace gray)
+  if [[ "$channel" == red ]]; then grayscale=(-channel R -separate +channel); fi
   "${transform[@]}" "$file" -crop "$crop" +repage -resize 300% \
-    -colorspace gray -contrast-stretch 1%x1% png:- |
+    "${grayscale[@]}" -contrast-stretch 1%x1% png:- |
     tesseract stdin stdout --psm "$psm" tsv 2>/dev/null
 }
 
 settings_phrase() {
-  local file=$1 crop=$2 phrase=$3 psm=${4:-11}
+  local file=$1 crop=$2 phrase=$3 psm=${4:-11} channel=${5:-gray}
   local roi_height roi_width x y
   if [[ ! "$crop" =~ ^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$ ]]; then
     return 1
   fi
   roi_width=${BASH_REMATCH[1]}; roi_height=${BASH_REMATCH[2]}
   x=${BASH_REMATCH[3]}; y=${BASH_REMATCH[4]}
-  settings_ocr "$file" "$crop" "$psm" |
+  settings_ocr "$file" "$crop" "$psm" "$channel" |
     awk -F '\t' -v phrase="$phrase" -v x="$x" -v y="$y" -v w="$roi_width" -v h="$roi_height" '
       BEGIN { n = split(tolower(phrase), want, " ") }
       $1 == 5 && $11 >= 20 && $12 != "" {
@@ -846,7 +848,7 @@ thread_find_row_crop() {
 }
 
 thread_find_transcript() {
-  local app=$1 file=$2 phase=${3:-before-find} user_crop assistant_crop
+  local app=$1 file=$2 phase=${3:-before-find} user_crop assistant_crop channel=gray
   # Single-line role regions measured on the original 45411570052 native
   # fixture frames. Never accept the repeated user title in the breadcrumb
   # or sidebar, or a phrase found in the other role's position.
@@ -855,13 +857,17 @@ thread_find_transcript() {
     butler) user_crop='220x42+753+60'; assistant_crop='338x42+296+109' ;;
     *) return 1 ;;
   esac
-  if ! settings_phrase "$file" "$user_crop" 'Does the release open' 7 >/dev/null; then
+  # T3's active orange highlight shares the glyphs' contrast in luminance.
+  # Use the red plane for these two ROIs only: the highlight stays bright
+  # and the dark letterforms remain intact on the genuine native frame.
+  if [[ "$app" == t3 && "$phase" == find ]]; then channel=red; fi
+  if ! settings_phrase "$file" "$user_crop" 'Does the release open' 7 "$channel" >/dev/null; then
     # The earlier Butler layout placed the user bubble farther right.
     # Accept that exact region only before Find opens; it overlaps Find.
     [[ "$app" == butler && "$phase" == before-find ]] &&
       settings_phrase "$file" '205x42+1044+60' 'Does the release open' 7 >/dev/null || return 1
   fi
-  settings_phrase "$file" "$assistant_crop" 'The release opens and shows this thread' 7 >/dev/null
+  settings_phrase "$file" "$assistant_crop" 'The release opens and shows this thread' 7 "$channel" >/dev/null
 }
 
 await_thread_find_count() {

@@ -123,3 +123,9 @@ still differ.
 - [T3 Code](t3/saved-transcript-light-1280x800.png) · [Butler](butler/saved-transcript-light-1280x800.png)
 - Original 1280×800 Linux X11 images from [native run 45411570052](https://github.com/Ferrb9579/butler/actions/runs/45411570052), T3 Code v0.1.11 (`59651c1761f6c63e9b6056839067066968e6a406`) and Butler `c621b6686bc098c82e522caf1259ebffc3876fbf`. Both show the same two synthetic saved messages in a selected thread, before Find opens. T3's provider status alert was dismissed only in that test session.
 - Raw absolute error: 277,075 of 1,024,000 pixels differ (27.06%). T3 still has a details panel, a saved-thread composer and a richer sidebar; Butler's user bubble extends farther right. The sidebar fixture titles differ. This is a transcript layout comparison, **not a verified Find pair or a visual parity pass**.
+
+## Saved thread Find, first match (behavior comparison)
+
+- [T3 Code](t3/saved-thread-find-first-match-light-1280x800.png) · [Butler](butler/saved-thread-find-first-match-light-1280x800.png)
+- Original, unchanged 1280×800 X11 frames from [native run 45414278088](https://github.com/Ferrb9579/butler/actions/runs/45414278088), T3 Code v0.1.11 (`59651c1761f6c63e9b6056839067066968e6a406`) and Butler `82c42b4411f8f4800928cfddd9e7b72c1bda6415`. Both have the same two fixture messages with `release` and count `1/2` visibly present. The original run's T3 verifier misread the highlighted text. Independent inspection and the corrected strict OCR gate verified the unchanged frames after the run.
+- 275,416 of 1,024,000 pixels differ (26.90%). T3 highlights both hits and retains its details panel and composer. Butler still lacks that inline background and those saved-thread surfaces. The T3 Next and no-match frames were not captured in this run and aren't represented here.
