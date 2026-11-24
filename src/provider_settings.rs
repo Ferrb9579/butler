@@ -1,6 +1,6 @@
 //! Local provider settings overlay. The canned provider is available to tests only.
 
-use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, label, space};
+use crate::empty_workspace::{WHITE, label, space};
 use butler::profile::{Profile, Provider};
 use incular::{
     controls::{Button, ButtonStyle, ButtonVariant},
@@ -8,8 +8,48 @@ use incular::{
     widgets::{BackdropFilter, StackFit, internal::ActionSurface},
 };
 
-const SIDEBAR: Color = Color::rgba(249, 249, 249, 255);
+// 8-bit sRGB conversions of the light OKLCH tokens in the pinned release CSS.
+const PAGE: Color = Color::rgba(252, 252, 252, 255); // zinc-25
+const SIDEBAR: Color = Color::rgba(250, 250, 250, 255); // zinc-50
+const RULE: Color = Color::rgba(228, 228, 231, 255); // zinc-200
+const MUTED: Color = Color::rgba(113, 113, 123, 255); // zinc-500
+const INK: Color = Color::rgba(24, 24, 27, 255); // zinc-900
 const SELECTED: Color = Color::rgba(240, 240, 243, 255);
+
+// T3 Code v0.1.11 AppRouteModal.tsx:68–104. Current native window exposes
+// no caption/safe-area insets to this layout; these dimensions are for zero inset.
+#[derive(Debug, PartialEq)]
+struct ModalGeometry {
+    width: f32,
+    height: f32,
+    radius: f32,
+    framed: bool,
+}
+
+fn modal_geometry(width: f32, height: f32) -> ModalGeometry {
+    let framed = width >= 640.0;
+    let inset = if width >= 1024.0 {
+        40.0
+    } else if framed {
+        24.0
+    } else {
+        0.0
+    };
+    ModalGeometry {
+        width: if framed {
+            (width - 2.0 * inset).min(1280.0)
+        } else {
+            width
+        },
+        height: if framed {
+            (height - 2.0 * inset).clamp(0.0, 960.0)
+        } else {
+            height
+        },
+        radius: if framed { 16.0 } else { 0.0 },
+        framed,
+    }
+}
 
 #[derive(Clone)]
 pub struct Names {
@@ -90,34 +130,45 @@ pub fn overlay(
         #[cfg(test)]
         fixture_enabled,
     );
-    let modal = Container::new()
-        .margin(EdgeInsets::all(40.0))
-        .decoration(
-            BoxDecoration::new()
-                .color(PAGE)
+    let row: Widget = Row::new(vec![
+        Widget::from(first),
+        Container::new().width(1.0).color(RULE).into(),
+        Expanded::new(detail).into(),
+    ])
+    .cross_axis_alignment(CrossAxisAlignment::Stretch)
+    .into();
+    let modal = LayoutBuilder::new(move |_, constraints| {
+        let g = modal_geometry(constraints.max_width(), constraints.max_height());
+        let radius = BorderRadius::all(Radius::circular(g.radius));
+        let mut decoration = BoxDecoration::new().color(PAGE).border_radius(radius);
+        if g.framed {
+            // Tailwind shadow-2xl/40: 0px 25px 50px -12px, black at 40%.
+            decoration = decoration
                 .border(Border::new(1.0, RULE))
-                .border_radius(BorderRadius::all(Radius::circular(16.0)))
                 .box_shadow([BoxShadow::new(
-                    Color::rgba(18, 18, 24, 69),
-                    Offset::new(0.0, 18.0),
-                    34.0,
-                    0.0,
-                )]),
-        )
-        .child(ClipRRect::new(
-            BorderRadius::all(Radius::circular(16.0)),
-            Row::new(vec![
-                Widget::from(first),
-                Container::new().width(1.0).color(RULE).into(),
-                Expanded::new(detail).into(),
-            ])
-            .cross_axis_alignment(CrossAxisAlignment::Stretch),
-        ));
+                    Color::rgba(0, 0, 0, 102),
+                    Offset::new(0.0, 25.0),
+                    50.0,
+                    -12.0,
+                )]);
+        }
+        Container::new()
+            .alignment(Alignment::CENTER)
+            .child(
+                Container::new()
+                    .width(g.width)
+                    .height(g.height)
+                    .decoration(decoration)
+                    .child(ClipRRect::new(radius, row.clone())),
+            )
+            .into()
+    });
     Stack::new(vec![
         workspace,
         BackdropFilter::new(
             GaussianBlur::uniform(4.0),
-            Container::new().color(Color::rgba(252, 252, 252, 72)),
+            // index.css dialog-backdrop: background at 60% opacity, blur 4px.
+            Container::new().color(Color::rgba(252, 252, 252, 153)),
         )
         .into(),
         modal.into(),
@@ -210,12 +261,16 @@ fn details(
     let saved = names.committed.get();
     let heading = Container::new()
         .height(48.0)
-        .padding(EdgeInsets::symmetric(20.0, 0.0))
+        .padding(EdgeInsets::from_ltrb(20.0, 0.0, 8.0, 0.0))
         .child(
             Row::new(vec![
-                label("Settings  /  Providers", 14.0, FontWeight::W500, INK),
+                breadcrumb_label("Settings", MUTED),
+                SizedBox::new().width(12.0).into(),
+                breadcrumb_label("/", MUTED),
+                SizedBox::new().width(12.0).into(),
+                breadcrumb_label("Providers", INK),
                 Spacer::new().into(),
-                ActionSurface::with_child(label("×", 20.0, FontWeight::W400, MUTED))
+                ActionSurface::with_child(label("×", 16.0, FontWeight::W400, MUTED))
                     .label("Back to workspace")
                     .size(Size::new(28.0, 28.0))
                     .on_press(go_back)
@@ -406,6 +461,19 @@ fn chip(text: &str) -> Widget {
         .into()
 }
 
+fn breadcrumb_label(text: &str, color: Color) -> Widget {
+    Text::new(text)
+        .style(
+            TextStyle::new()
+                .font_family("Liberation Sans")
+                .font_size(14.0)
+                .line_height_absolute(20.0)
+                .font_weight(FontWeight::W500)
+                .color(color),
+        )
+        .into()
+}
+
 pub fn action(text: &str, click: impl Fn() + 'static) -> Widget {
     Button::new(text)
         .style(
@@ -422,4 +490,24 @@ pub fn action(text: &str, click: impl Fn() + 'static) -> Widget {
         )
         .on_click(click)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn t3_modal_breakpoints_and_caps_at_zero_native_inset() {
+        for (width, height, expected) in [
+            (639.0, 800.0, (639.0, 800.0, 0.0, false)),
+            (640.0, 800.0, (592.0, 752.0, 16.0, true)),
+            (1023.0, 800.0, (975.0, 752.0, 16.0, true)),
+            (1024.0, 800.0, (944.0, 720.0, 16.0, true)),
+            (1280.0, 800.0, (1200.0, 720.0, 16.0, true)),
+            (1920.0, 1200.0, (1280.0, 960.0, 16.0, true)),
+        ] {
+            let g = modal_geometry(width, height);
+            assert_eq!((g.width, g.height, g.radius, g.framed), expected);
+        }
+    }
 }
