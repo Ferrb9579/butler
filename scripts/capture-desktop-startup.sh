@@ -35,7 +35,7 @@ capture_one() (
   local runtime="$tmp/$profile" window="" tick dimensions ready="" window_pid window_xid=""
   local log="$out/$name.log"
   mkdir -p -m 700 "$runtime"/{config,cache,data,state,run}
-  if [[ "$name" == t3-thread-find || "$name" == t3-compact-details ]]; then
+  if [[ "$name" == t3-thread-find || "$name" == t3-compact-details || "$name" == t3-branch-details ]]; then
     # The upstream release smoke launches the pinned executable directly and
     # opens the thread by its DOM row. Use that known-good navigation only
     # for this optional fixture, then keep the actual Electron window alive
@@ -45,10 +45,13 @@ capture_one() (
       "$(dirname -- "${BASH_SOURCE[0]}")/diagnose-reference-find.cjs" \
       "$t3" "$out/$name-renderer-diagnostic.json" "$ready" "$width" "$height" \
       "$out/$name-renderer-diagnostic.png"
+    if [[ "$name" == t3-branch-details ]]; then set -- "$@" "$BRANCH_DETAILS_REF"; fi
     # Do not upload raw helper or Chromium logs.
     log=/dev/null
   elif [[ "$name" == butler-compact-details ]]; then
     set -- env 'COMPUTERNAME=Compact Fixture' "$@"
+  elif [[ "$name" == butler-branch-details ]]; then
+    set -- env 'COMPUTERNAME=Branch Fixture' "$@"
   fi
   XDG_CONFIG_HOME="$runtime/config" XDG_CACHE_HOME="$runtime/cache" \
     XDG_DATA_HOME="$runtime/data" XDG_STATE_HOME="$runtime/state" \
@@ -99,7 +102,7 @@ capture_one() (
     await_new_project_workspace "$window" "$out/$name-startup.png"
   elif [[ "$name" == butler-thread-chooser ]]; then
     await_thread_draft "$window" "$out/$name-startup.png" 'Project Beta'
-  elif [[ "$name" == *-thread-find || "$name" == *-compact-details ]]; then
+  elif [[ "$name" == *-thread-find || "$name" == *-compact-details || "$name" == *-branch-details ]]; then
     local thread_title='Release launch check'
     local thread_app=${name%%-*}
     if [[ "$thread_app" == butler ]]; then thread_title='Does the release open'; fi
@@ -208,6 +211,8 @@ capture_one() (
     capture_native_thread_find "$window" "${name%-thread-find}" "$thread_title" "$ready"
   elif [[ "$name" == t3-compact-details || "$name" == butler-compact-details ]]; then
     capture_native_compact_details "$window" "$thread_app" "$thread_title"
+  elif [[ "$name" == t3-branch-details || "$name" == butler-branch-details ]]; then
+    capture_native_branch_details "$window" "$thread_app" "$thread_title" "$BRANCH_DETAILS_REF"
   fi
 )
 
@@ -972,7 +977,7 @@ capture_native_thread_find() {
 }
 
 seed_butler_thread_find() {
-  local runtime=$1 profile=$1/state/butler project=$1/project
+  local runtime=$1 profile=$1/state/butler project=${2:-$1/project}
   local thread='a0142a87-8050-43fc-9d39-038947dff1aa'
   mkdir -p -m 700 "$profile/threads" "$project" || return 1
   printf '%s\n' 'butler-onboarding-complete-v1' >"$profile/onboarding" || return 1
@@ -1241,6 +1246,162 @@ verify_native_compact_details() {
   printf '%s\n' 'Compact details: verified route pairs for all three states (raw diagnostic diffs).' | tee -a "$notes"
 }
 
+branch_fixture_git() {
+  local home=$1; shift
+  env -i PATH=/usr/bin:/bin HOME="$home" XDG_CONFIG_HOME="$home" LC_ALL=C \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ALLOW_PROTOCOL= \
+    GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 \
+    git --no-pager -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+    -c gc.auto=0 -c maintenance.auto=false "$@"
+}
+
+branch_fixture_snapshot() {
+  local home=$1 repo=$2 branch=$3 top ref commit status remotes
+  top=$(branch_fixture_git "$home" -C "$repo" rev-parse --show-toplevel) || return 1
+  ref=$(branch_fixture_git "$home" -C "$repo" symbolic-ref --quiet HEAD) || return 1
+  commit=$(branch_fixture_git "$home" -C "$repo" rev-parse --verify 'HEAD^{commit}') || return 1
+  status=$(branch_fixture_git "$home" -C "$repo" status --porcelain=v1 --untracked-files=all) || return 1
+  remotes=$(branch_fixture_git "$home" -C "$repo" remote) || return 1
+  [[ "$top" == "$repo" && "$ref" == "refs/heads/$branch" && -z "$status" && -z "$remotes" ]] || return 1
+  # A missing upstream is expected; nothing should query a remote.
+  if branch_fixture_git "$home" -C "$repo" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then return 1; fi
+  printf '%s\n' "$commit"
+}
+
+point_t3_branch_fixture_at_repo() {
+  python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import sqlite3
+import sys
+
+database, repo = map(Path, sys.argv[1:])
+if repo.resolve(strict=True) != repo or not (repo / ".git").is_dir():
+    raise SystemExit("Branch seed requires a canonical local Git directory")
+with sqlite3.connect(database.resolve(strict=True).as_uri() + "?mode=rw", uri=True) as db:
+    # The pinned seed has exactly one project path and no saved ref on
+    # the selected thread. The screenshot must read the actual local HEAD.
+    if db.execute("""
+        SELECT branch, worktree_path FROM projection_threads
+        WHERE thread_id = 'launch-check-thread' AND project_id = 'launch-check-project'
+    """).fetchall() != [(None, None)] or db.execute("""
+        SELECT json_type(payload_json, '$.branch'), json_type(payload_json, '$.worktreePath')
+        FROM orchestration_v2_projection_threads
+        WHERE thread_id = 'launch-check-thread' AND project_id = 'launch-check-project'
+    """).fetchall() != [("null", "null")]:
+        raise SystemExit("Pinned selected thread has an unexpected saved branch")
+    updated = db.execute("""
+        UPDATE projection_projects SET workspace_root = ? WHERE project_id = 'launch-check-project'
+        AND workspace_root = '/tmp/t3-launch-check-workspace' AND deleted_at IS NULL AND auto_pull = 0
+    """, (str(repo),))
+    if updated.rowcount != 1:
+        raise SystemExit("Pinned project root was not updated exactly once")
+PY
+}
+
+branch_details_ref() {
+  local file=$1 branch=$2
+  # The 1280-wide pane's real inline card occupies x988..1267.
+  # Match the complete case-sensitive, punctuation-free fixture ref token
+  # inside that card only; a footer selector or title cannot satisfy this.
+  settings_ocr "$file" '268x258+996+52' 11 |
+    awk -F '\t' -v ref="$branch" '$1 == 5 && $11 >= 20 && $12 == ref { found = 1 } END { exit !found }'
+}
+
+capture_native_branch_details() {
+  local window=$1 app=$2 title=$3 branch=$4 tick crop prefix="$out/$2-branch-details"
+  if [[ "$app" == butler ]]; then
+    crop=$(thread_find_row_crop butler) || return 1
+    click_project_control "$window" "$prefix-thread-row.png" "$crop" "$title" 11 || return 1
+  fi
+  for ((tick=0; tick<16; tick++)); do
+    "${capture[@]}" -window "$window" "$prefix-open.png" || return 1
+    if [[ $("${identify[@]}" -format '%wx%h' "$prefix-open.png") == '1280x800' ]] &&
+       settings_phrase "$prefix-open.png" '228x29+406+5' "$title" 7 >/dev/null &&
+       thread_find_transcript "$app" "$prefix-open.png" &&
+       branch_details_ref "$prefix-open.png" "$branch" &&
+       ! branch_details_ref "$prefix-open.png" 'plumstone'; then
+      if [[ "$app" == t3 ]]; then
+        settings_phrase "$prefix-open.png" '268x258+996+52' 'Add project script' 11 >/dev/null && return 0
+      else
+        settings_phrase "$prefix-open.png" '222x41+1015+57' 'Branch Fixture' 11 >/dev/null && return 0
+      fi
+    fi
+    sleep 0.25
+  done
+  printf '%s: exact native branch details label not verified\n' "$app" >&2
+  return 1
+}
+
+verify_native_branch_details() {
+  local source=$1 app name runtime binary before after repo git_home fingerprint
+  local branch='copperleaf' fixture_sha='e65f15f89a847a264cf4366cd7bcdc31cef1d5fbfd07707ed497cc0f045357b5'
+  local notes="$out/branch-details-capture-notes.txt"
+  touch "$out/t3-branch-details-unverified" "$out/butler-branch-details-unverified" \
+    "$out/branch-details-pair-unverified" || return 1
+  printf '%s\n' \
+    'Optional native branch details at 1280×800: the same local synthetic Git worktree in both apps.' \
+    "The disposable repository uses actual refs/heads/$branch, one empty local commit and no upstream or remotes." \
+    "Pinned T3 v0.1.11 source SQLite SHA256: $fixture_sha. Only its copied project path is set." \
+    'The original non-repository reference is the negative control. No menu, branch mutation, provider, or project action is used.' \
+    >"$notes" || return 1
+  [[ -f "$source" ]] || { echo 'Pinned input missing; branch comparison remains unverified.' >>"$notes"; return 1; }
+  repo=$(mktemp -d "$tmp/shared-branch-fixture.XXXXXX") || return 1
+  repo=$(realpath -e -- "$repo") || return 1
+  git_home="$tmp/branch-git-home"
+  mkdir -m 700 -- "$git_home" || return 1
+  branch_fixture_git "$git_home" init --quiet --template= --initial-branch="$branch" "$repo" || return 1
+  branch_fixture_git "$git_home" -C "$repo" -c user.name='Native Fixture' -c user.email='fixture@example.invalid' \
+    commit --quiet --allow-empty --no-gpg-sign -m 'Synthetic native UI fixture' || return 1
+  fingerprint=$(branch_fixture_snapshot "$git_home" "$repo" "$branch") || return 1
+  for app in t3 butler; do
+    local control="$out/$app-thread-find-transcript.png"
+    if [[ ! -f "$control" || $("${identify[@]}" -format '%wx%h' "$control") != '1280x800' ]] ||
+       ! thread_find_transcript "$app" "$control" || branch_details_ref "$control" "$branch"; then
+      printf '%s: verified non-repository negative control unavailable\n' "$app" | tee -a "$notes" >&2
+      continue
+    fi
+    name="$app-branch-details"
+    runtime=$(realpath -m -- "$tmp/$name") || return 1
+    mkdir -p -m 700 "$runtime/home" || return 1
+    if [[ "$app" == t3 ]]; then
+      local db="$runtime/t3-code/userdata/statev2.sqlite"
+      mkdir -p -m 700 "$runtime/t3-code/userdata" &&
+        cp -- "$source" "$db" &&
+        printf '%s  %s\n' "$fixture_sha" "$db" | sha256sum --check --status &&
+        point_t3_branch_fixture_at_repo "$db" "$repo" || continue
+      binary="$t3/t3code"
+    else
+      binary="$butler"
+      seed_butler_thread_find "$runtime" "$repo" || continue
+      before=$(sha256sum -- "$runtime/state/butler/local-projects" "$runtime/state/butler/threads/"*.json) || continue
+    fi
+    HOME="$runtime/home" T3CODE_HOME="$runtime/t3-code" T3CODE_TELEMETRY_ENABLED=false \
+      T3CODE_DISABLE_AUTO_UPDATE=true GIT_ALLOW_PROTOCOL= GIT_TERMINAL_PROMPT=0 \
+      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 \
+      BRANCH_DETAILS_REF="$branch" CAPTURE_PROFILE="$name" capture_one "$name" "$binary"
+    local rc=$?
+    after=$(branch_fixture_snapshot "$git_home" "$repo" "$branch") || return 1
+    if [[ "$fingerprint" != "$after" ]]; then
+      echo 'Reference checkout changed; branch comparison invalid.' | tee -a "$notes" >&2
+      return 1
+    fi
+    if (( rc != 0 )); then
+      printf '%s: optional branch details incomplete; see its unverified marker\n' "$app" | tee -a "$notes" >&2
+      continue
+    fi
+    if [[ "$app" == butler ]]; then
+      after=$(sha256sum -- "$runtime/state/butler/local-projects" "$runtime/state/butler/threads/"*.json) || continue
+      [[ "$before" == "$after" && ! -e "$runtime/state/butler/scratch" ]] || continue
+    fi
+    rm -f -- "$out/$name-unverified" || return 1
+    printf '%s: verified selected transcript and exact local branch in the native details panel\n' "$app" | tee -a "$notes"
+  done
+  [[ ! -e "$out/t3-branch-details-unverified" && ! -e "$out/butler-branch-details-unverified" ]] || return 1
+  compare_frames t3-branch-details-open butler-branch-details-open branch-details-open || return 1
+  rm -f -- "$out/branch-details-pair-unverified" || return 1
+  echo 'Branch details: verified same-fixture native route pair (raw diagnostic diff).' | tee -a "$notes"
+}
+
 set +e
 capture_one t3 "$t3/AppRun"
 reference_rc=$?
@@ -1348,5 +1509,14 @@ if [[ "${CAPTURE_COMPACT_DETAILS:-0}" == 1 ]]; then
   set -e
   if (( compact_rc != 0 )); then
     echo 'Optional native compact details did not complete; see unverified markers' >&2
+  fi
+fi
+if [[ "${CAPTURE_BRANCH_DETAILS:-0}" == 1 ]]; then
+  set +e
+  verify_native_branch_details "${CAPTURE_THREAD_FIND_DB:-}"
+  branch_rc=$?
+  set -e
+  if (( branch_rc != 0 )); then
+    echo 'Optional native branch details did not complete; see unverified markers' >&2
   fi
 fi

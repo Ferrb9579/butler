@@ -62,3 +62,9 @@ messages at 1000×800. It checks closed, opened from the header, and
 Escape-dismissed; the popup area must return to its original pixels.
 Consult `compact-details-capture-notes.txt` and the separate unverified
 markers before using these frames.
+
+The optional wide branch fixture points both apps at the same disposable
+local Git repository. It verifies that the actual named HEAD appears inside
+Details in both raw X11 frames, and checks a non-Git negative control. No
+Git action or provider is invoked. See `branch-details-capture-notes.txt`
+and `branch-details-pair-unverified` in the artifact before using the pair.

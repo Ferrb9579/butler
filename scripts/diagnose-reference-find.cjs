@@ -16,6 +16,7 @@ async function main() {
   const ready = process.argv[4];
   const size = { width: Number(process.argv[5]), height: Number(process.argv[6]) };
   const diagnosticPng = process.argv[7];
+  const branch = process.argv[8];
   const failures = { page: 0, console: 0 };
   const report = (summary) => fs.writeFileSync(process.argv[3], JSON.stringify(summary) + "\n", {
     mode: 0o600,
@@ -171,6 +172,18 @@ async function main() {
         return;
       }
     }
+    if (branch !== undefined) {
+      stage = "branch-inline";
+      if (size.width !== 1280 || !/^[a-z]{3,24}$/.test(branch)) {
+        throw new Error("Invalid branch diagnostic fixture");
+      }
+      // Wait for the actual local Git status to paint in T3's inline details
+      // card. Do not click the selector. DOM is readiness only; native OCR
+      // on the same XID is still required before the pair can pass.
+      await page.locator('[data-thread-details-panel="inline"]')
+        .getByLabel(`Branch: ${branch}`, { exact: true })
+        .waitFor({ state: "visible", timeout: 12_000 });
+    }
     const nativeSize = await native.evaluate((window) => {
       const { width, height } = window.getBounds();
       return { width, height };
@@ -178,6 +191,7 @@ async function main() {
     const result = {
       stage: "complete", failures, nativeSize, bannerDismissed, beforeDismiss, ...summary,
       ...(compactHeader === null ? {} : { compactHeader }),
+      ...(branch === undefined ? {} : { branchInline: true }),
     };
     report(result);
     if (ready !== undefined) {
