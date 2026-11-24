@@ -160,6 +160,8 @@ capture_one() (
     fi
   elif [[ "$name" == t3-new-project-form ]]; then
     capture_reference_new_project_form "$window"
+  elif [[ "$name" == butler-new-project-keys ]]; then
+    capture_butler_new_project_keys "$window" "$runtime/state/butler"
   elif [[ "$name" == t3-git-url-review || "$name" == butler-git-url-review ]]; then
     capture_git_url_review "$window" "${name%-git-url-review}" "$runtime"
   elif [[ "$name" == butler-git-url-keys ]]; then
@@ -465,6 +467,68 @@ create_native_project() {
     return 1
   }
 }
+
+capture_butler_new_project_keys() {
+  local window=$1 state=$2 tick
+  local prefix="$out/butler-new-project-keys"
+  local title='Picker Key Fixture' slug='picker-key-fixture'
+  local input='400x40+389+84' footer='570x41+353+249'
+  local row='220x32+365+191' sources='574x320+353+120'
+  [[ ! -e "$state/local-projects" && ! -e "$state/projects/$slug" ]] || return 1
+  click_project_control "$window" "$prefix-landing.png" '160x40+604+442' 'Add project' 7 || return 1
+  click_project_control "$window" "$prefix-sources-before.png" "$sources" 'New project' 11 || return 1
+  click_project_control "$window" "$prefix-empty.png" "$input" 'Project name' 7 || return 1
+  xdotool type --clearmodifiers "$title" || return 1
+  await_project_phrase "$window" "$prefix-typed.png" "$input" "$title" 7 >/dev/null || return 1
+  xdotool windowfocus "$window" key --clearmodifiers Down || return 1
+
+  # Only send Enter once, from a frame showing the typed name, actual result,
+  # selected-action footer and the newly modified Create accessory.
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$prefix-selected.png" || return 1
+    if settings_phrase "$prefix-selected.png" "$input" "$title" 7 >/dev/null &&
+       settings_phrase "$prefix-selected.png" "$row" 'Add existing project' 11 >/dev/null &&
+       settings_phrase "$prefix-selected.png" "$footer" 'Enter Select' 7 >/dev/null &&
+       settings_phrase "$prefix-selected.png" '153x33+768+89' 'Create Ctrl Enter' 7 >/dev/null; then
+      break
+    fi
+    sleep 0.4
+  done
+  (( tick < 15 )) || { echo 'Native New Project selection was not verified; Enter was not sent' >&2; return 1; }
+  xdotool windowfocus "$window" key --clearmodifiers Return || return 1
+  for ((tick=0; tick<15; tick++)); do
+    "${capture[@]}" -window "$window" "$prefix-sources-after.png" || return 1
+    if settings_phrase "$prefix-sources-after.png" "$sources" 'Sources' 11 >/dev/null &&
+       settings_phrase "$prefix-sources-after.png" "$sources" 'Local folder' 11 >/dev/null &&
+       settings_phrase "$prefix-sources-after.png" "$sources" 'Git URL' 11 >/dev/null &&
+       ! settings_phrase "$prefix-sources-after.png" "$input" "$title" 7 >/dev/null; then
+      [[ ! -e "$state/local-projects" && ! -e "$state/projects/$slug" ]] || return 1
+      return 0
+    fi
+    sleep 0.4
+  done
+  echo 'Native New Project Enter did not return to Sources without creation' >&2
+  return 1
+}
+
+verify_butler_new_project_keys() (
+  local name='butler-new-project-keys' rc
+  local state="$tmp/$name/state/butler" marker="$out/$name-unverified" notes="$out/$name-capture-notes.txt"
+  touch "$marker" || return 1
+  echo 'Native Linux New Project selected-route check; disposable profile; separate click/create baseline retained.' >"$notes" || return 1
+  mkdir -p "$state" || return 1
+  printf '%s\n' 'butler-onboarding-complete-v1' >"$state/onboarding" || return 1
+  set +e
+  capture_one "$name" "$butler"
+  rc=$?
+  set -e
+  if (( rc != 0 )) || [[ -e "$state/local-projects" || -e "$state/projects/picker-key-fixture" ]]; then
+    echo 'New Project keyboard capture unverified; raw frames diagnostic only.' | tee -a "$notes" >&2
+    return 1
+  fi
+  rm -f -- "$marker" || return 1
+  echo 'New Project fixture verified: Down selected Add existing, one Return opened Sources, no project created or registered.' | tee -a "$notes"
+)
 
 verify_native_new_project() {
   local profile='butler-new-project' location rc
@@ -1794,6 +1858,15 @@ if [[ -e "$out/t3-landing-unverified" ]]; then
 fi
 if [[ "${VERIFY_BUTLER_NEW_PROJECT:-0}" == 1 ]]; then
   verify_native_new_project
+fi
+if [[ "${CAPTURE_BUTLER_NEW_PROJECT_KEYS:-0}" == 1 ]]; then
+  set +e
+  verify_butler_new_project_keys
+  new_project_keys_rc=$?
+  set -e
+  if (( new_project_keys_rc != 0 )); then
+    echo 'Optional native Butler New Project keyboard check did not complete; see unverified marker' >&2
+  fi
 fi
 if [[ "${CAPTURE_T3_NEW_PROJECT_FORM:-0}" == 1 ]]; then
   verify_reference_new_project_form
