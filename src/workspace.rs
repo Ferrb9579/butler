@@ -21,6 +21,8 @@ pub fn draft(
     jump: Option<Jump>,
     jump_state: Signal<Option<Jump>>,
     find_input: TextEditingController,
+    title_editor: crate::thread_title::Editor,
+    rename: impl Fn(uuid::Uuid, &str) + 'static,
     history_error: Option<String>,
     search: Search,
     add_project: Option<impl Fn() + Clone + 'static>,
@@ -36,6 +38,25 @@ pub fn draft(
     let header_icon = project_icon.clone();
     let start_here = Rc::new(start_here);
     let selected = selected.map(Rc::new);
+    let active_header = if let Some(turn) = &selected {
+        let saved_title = history
+            .iter()
+            .find(|row| row.id == turn.id)
+            .map(|row| row.title.clone())
+            .unwrap_or_else(|| {
+                turn.prompt
+                    .trim()
+                    .lines()
+                    .next()
+                    .unwrap_or("New thread")
+                    .chars()
+                    .take(72)
+                    .collect()
+            });
+        title_editor.view(turn.id, &saved_title, rename)
+    } else {
+        breadcrumb_text("New thread", INK)
+    };
     let rendered_query = search.query();
     let sidebar_settings = open_settings.clone();
     let sidebar = Widget::stateful_builder(search.revision(), move |_| {
@@ -186,13 +207,6 @@ pub fn draft(
             threads,
         )
     });
-    let route_title = selected
-        .as_ref()
-        .and_then(|turn| turn.prompt.trim().lines().next())
-        .unwrap_or("New thread")
-        .chars()
-        .take(72)
-        .collect::<String>();
     Row::new(vec![
         sidebar,
         Container::new().width(1.0).color(RULE).into(),
@@ -219,7 +233,7 @@ pub fn draft(
                                         move || action(),
                                     ),
                                     breadcrumb_text("/", MUTED),
-                                    Expanded::new(breadcrumb_text(&route_title, INK)).into(),
+                                    Expanded::new(active_header.clone()).into(),
                                 ])
                                 .spacing(12.0)
                                 .cross_axis_alignment(CrossAxisAlignment::Center)

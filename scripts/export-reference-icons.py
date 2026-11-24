@@ -31,7 +31,7 @@ chart-no-axes-column check chevron-down chevron-right chevron-up circle-alert
 circle-dot cloud corner-left-up external-link eye eye-off file-diff flask-conical folder
 folder-git-2 folder-plus folder-tree git-branch git-pull-request-arrow globe
 info key-round keyboard link list-filter lock lock-open log-in message-square-dashed
-message-square-text messages-square mic palette panel-left panel-left-close panels-top-left paperclip plus
+message-square-text messages-square mic palette panel-left panel-left-close panels-top-left paperclip pencil plus
 refresh-cw search server settings settings-2 shield-check shield-off
 smartphone snap-shot square-pen terminal trash-2 undo-2 wrench x
 """.split())

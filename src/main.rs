@@ -11,6 +11,7 @@ mod settings_icons;
 mod sidebar_search;
 mod thread_find;
 mod thread_find_bar;
+mod thread_title;
 mod typography;
 mod ui;
 mod welcome;
@@ -111,6 +112,7 @@ fn application_with_transport(
     let message_jump = Signal::new(None::<message_jump::Jump>);
     let posted_message_jump = Cell::new(None);
     let thread_find_input = TextEditingController::new();
+    let thread_title_editor = thread_title::Editor::default();
     let picker_error = Signal::new(
         saved_project
             .err()
@@ -210,6 +212,9 @@ fn application_with_transport(
                 let jump_on_new = message_jump.clone();
                 let here_jump = message_jump.clone();
                 let here_draft = selected_thread.clone();
+                let rename_on_open = thread_title_editor.clone();
+                let rename_on_new = thread_title_editor.clone();
+                let rename_here = thread_title_editor.clone();
                 let current = selected_thread.get();
                 let jump = message_jump
                     .get()
@@ -234,6 +239,11 @@ fn application_with_transport(
                 let target = project
                     .as_ref()
                     .map_or(Workspace::Scratch, |p| Workspace::Local(p.root.clone()));
+                let rename_workspace = target.clone();
+                let rename_store = history_store.clone();
+                let rename_selected = selected_thread.clone();
+                let rename_error = history_error.clone();
+                let rename_history = thread_history.clone();
                 let history = thread_history.get();
                 let messages = message_lookup.poll(
                     cx,
@@ -257,6 +267,31 @@ fn application_with_transport(
                     jump,
                     message_jump.clone(),
                     thread_find_input.clone(),
+                    thread_title_editor.clone(),
+                    move |id, title| {
+                        if !rename_selected
+                            .get()
+                            .is_some_and(|turn| turn.id == id && turn.workspace == rename_workspace)
+                        {
+                            return;
+                        }
+                        let result = rename_store
+                            .as_ref()
+                            .ok_or_else(|| std::io::Error::other("No local profile."))
+                            .and_then(|store| {
+                                store.rename(id, &rename_workspace, title)?;
+                                store.history(&rename_workspace)
+                            });
+                        match result {
+                            Ok(rows) => {
+                                rename_error.set(None);
+                                rename_history.set(rows);
+                            }
+                            Err(error) => {
+                                rename_error.set(Some(error.to_string()));
+                            }
+                        }
+                    },
                     history_error.get(),
                     sidebar_search.clone(),
                     add_project,
@@ -277,6 +312,7 @@ fn application_with_transport(
                         match outcome {
                             Ok(turn) => {
                                 show_error.set(None);
+                                rename_on_open.clear();
                                 let jump = seed.and_then(|(hit, query)| {
                                     message_jump::Jump::from_result(&turn, hit, &query)
                                 });
@@ -309,11 +345,13 @@ fn application_with_transport(
                             choose_error.set(None);
                             choose_step.set(Picker::ThreadProjects);
                         } else {
+                            rename_on_new.clear();
                             jump_on_new.set(None);
                             new_draft.set(None);
                         }
                     },
                     move || {
+                        rename_here.clear();
                         here_jump.set(None);
                         here_draft.set(None);
                     },
@@ -422,6 +460,7 @@ fn application_with_transport(
             let selected_thread = selected_thread.clone();
             let search_for_project = sidebar_search.clone();
             let jump_for_project = message_jump.clone();
+            let rename_for_project = thread_title_editor.clone();
             let icon_for_project = project_icon_revision.clone();
             #[cfg(test)]
             let fixture_for_project = fixture.clone();
@@ -451,6 +490,7 @@ fn application_with_transport(
                         #[cfg(test)]
                         fixture_for_project.reset();
                         jump_for_project.set(None);
+                        rename_for_project.clear();
                         selected_thread.set(None);
                         search_for_project.reset();
                         active_project.set(Some(project));
@@ -1265,6 +1305,72 @@ mod ui_tests {
         interact(&mut app, |sim| {
             sim.click("Open thread: Unrelated history").unwrap();
             assert!(sim.focus("Close thread find").is_err());
+        });
+    }
+
+    #[test]
+    fn saved_thread_rename_updates_search_and_survives_restart_without_editing_messages() {
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        let folder = tmp.0.join("Project");
+        fs::create_dir(&folder).unwrap();
+        let project = LocalProjects::new(&profile).open(&folder).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let store = ThreadStore::new(&profile);
+        let original = Conversation {
+            id: uuid::Uuid::new_v4(),
+            workspace: Workspace::Local(project.root),
+            prompt: "Original saved question".into(),
+            reply: "The saved response is unchanged.".into(),
+            follow_ups: Vec::new(),
+        };
+        store.save(&original).unwrap();
+        let mut app =
+            application(Some(profile.clone()), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, |sim| {
+            let modifier = if cfg!(target_os = "macos") {
+                Code::MetaLeft
+            } else {
+                Code::ControlLeft
+            };
+            let replace = |value: &str| {
+                sim.focus("Thread title").unwrap();
+                sim.key_down(modifier).unwrap();
+                sim.press_key(KeyboardKey::Character("a".into()), Code::KeyA)
+                    .unwrap();
+                sim.key_up(modifier).unwrap();
+                sim.type_text(value).unwrap();
+            };
+            sim.click("Open thread: Original saved question").unwrap();
+            sim.click("Thread actions for Original saved question")
+                .unwrap();
+            sim.click("Rename thread").unwrap();
+            replace("Do not save");
+            sim.press(Code::Escape).unwrap();
+            sim.click("Thread actions for Original saved question")
+                .unwrap();
+            sim.click("Rename thread").unwrap();
+            replace("   ");
+            sim.press(Code::Enter).unwrap();
+            sim.focus("Thread title cannot be empty").unwrap();
+            sim.click("Thread actions for Original saved question")
+                .unwrap();
+            sim.click("Rename thread").unwrap();
+            replace("  Café notes  ");
+            sim.press(Code::Enter).unwrap();
+            sim.focus("Thread actions for Café notes").unwrap();
+            sim.focus("The saved response is unchanged.").unwrap();
+            sim.type_into("Search threads", "cafe notes").unwrap();
+            sim.focus("Open thread: Café notes").unwrap();
+        });
+        assert_eq!(store.load(original.id).unwrap().unwrap(), original);
+        drop(app);
+        let mut reopened =
+            application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut reopened, |sim| {
+            sim.click("Open thread: Café notes").unwrap();
+            sim.focus("Thread actions for Café notes").unwrap();
+            sim.focus("Original saved question").unwrap();
         });
     }
 

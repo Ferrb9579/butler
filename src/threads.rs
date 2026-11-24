@@ -27,6 +27,39 @@ pub struct Conversation {
     pub follow_ups: Vec<Exchange>,
 }
 
+// Both record versions retain [version, { conversation fields ... }]. An
+// optional, flattened display title keeps the public transcript type intact
+// and lets older readers continue loading records written by this version.
+#[derive(Debug, Deserialize, Serialize)]
+struct StoredConversation {
+    #[serde(flatten)]
+    conversation: Conversation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+}
+
+impl StoredConversation {
+    fn display_title(&self) -> String {
+        if let Some(title) = self
+            .title
+            .as_deref()
+            .map(trim_title)
+            .filter(|title| !title.is_empty())
+        {
+            return title.to_owned();
+        }
+        self.conversation
+            .prompt
+            .trim()
+            .lines()
+            .next()
+            .unwrap_or("New thread")
+            .chars()
+            .take(72)
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Exchange {
     pub prompt: String,
@@ -75,23 +108,56 @@ impl ThreadStore {
                 ))
             };
         }
-        self.write(turn)
+        self.write(&StoredConversation {
+            conversation: turn.clone(),
+            title: None,
+        })
+    }
+
+    /// Rename a saved thread in its exact workspace without altering its
+    /// transcript. The title shares the record transaction and lock used by
+    /// append, so concurrent message writes cannot discard the rename.
+    pub fn rename(&self, id: Uuid, workspace: &Workspace, title: &str) -> io::Result<()> {
+        let title = trim_title(title);
+        if title.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Thread title cannot be empty",
+            ));
+        }
+        let _lock = self.lock(id)?;
+        let mut stored = self
+            .load_record(id)?
+            .filter(|record| &record.conversation.workspace == workspace)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Thread not found in this workspace.",
+                )
+            })?;
+        self.workspace_directory(&stored.conversation)?;
+        if stored.display_title() == title {
+            return Ok(());
+        }
+        stored.title = Some(title.to_owned());
+        self.write(&stored)
     }
 
     /// Append against the transcript the caller saw. Identical retries do not duplicate replies.
     pub fn append(&self, expected: &Conversation, exchange: Exchange) -> io::Result<Conversation> {
         let _lock = self.lock(expected.id)?;
-        let mut saved = self.load(expected.id)?.ok_or_else(|| {
+        let mut stored = self.load_record(expected.id)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "Conversation no longer exists.")
         })?;
-        self.workspace_directory(&saved)?;
+        let saved = &mut stored.conversation;
+        self.workspace_directory(saved)?;
         let index = expected.follow_ups.len();
         let same_prefix = saved.workspace == expected.workspace
             && saved.prompt == expected.prompt
             && saved.reply == expected.reply
             && saved.follow_ups.starts_with(&expected.follow_ups);
         if same_prefix && saved.follow_ups.get(index) == Some(&exchange) {
-            return Ok(saved);
+            return Ok(stored.conversation);
         }
         if !same_prefix || saved.follow_ups.len() != index {
             return Err(io::Error::new(
@@ -100,9 +166,9 @@ impl ThreadStore {
             ));
         }
         saved.follow_ups.push(exchange);
-        validate(&saved)?;
-        self.write(&saved)?;
-        Ok(saved)
+        validate(saved)?;
+        self.write(&stored)?;
+        Ok(stored.conversation)
     }
 
     fn lock(&self, id: Uuid) -> io::Result<File> {
@@ -118,8 +184,8 @@ impl ThreadStore {
         Ok(lock)
     }
 
-    fn write(&self, turn: &Conversation) -> io::Result<()> {
-        let data = serde_json::to_vec(&(2_u8, turn)).map_err(io::Error::other)?;
+    fn write(&self, stored: &StoredConversation) -> io::Result<()> {
+        let data = serde_json::to_vec(&(2_u8, stored)).map_err(io::Error::other)?;
         if data.len() as u64 > RECORD_LIMIT {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -127,7 +193,7 @@ impl ThreadStore {
             ));
         }
         let folder = self.folder();
-        let target = self.record(turn.id);
+        let target = self.record(stored.conversation.id);
         let tmp = folder.join(format!(".turn-{}", Uuid::new_v4()));
         let outcome = (|| {
             let mut file = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
@@ -146,6 +212,11 @@ impl ThreadStore {
     }
 
     pub fn load(&self, id: Uuid) -> io::Result<Option<Conversation>> {
+        self.load_record(id)
+            .map(|record| record.map(|stored| stored.conversation))
+    }
+
+    fn load_record(&self, id: Uuid) -> io::Result<Option<StoredConversation>> {
         let file = match File::open(self.record(id)) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -159,16 +230,17 @@ impl ThreadStore {
                 "Thread record is too large.",
             ));
         }
-        let (version, turn): (u8, Conversation) = serde_json::from_slice(&data)
+        let (version, stored): (u8, StoredConversation) = serde_json::from_slice(&data)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let turn = &stored.conversation;
         if !(version == 2 || (version == 1 && turn.follow_ups.is_empty())) || turn.id != id {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Unrecognized thread record.",
             ));
         }
-        validate(&turn).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        Ok(Some(turn))
+        validate(turn).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Ok(Some(stored))
     }
 
     pub fn history(&self, workspace: &Workspace) -> io::Result<Vec<ThreadSummary>> {
@@ -196,11 +268,12 @@ impl ThreadStore {
         files.sort_unstable_by(|a, b| b.cmp(a));
         let mut list = Vec::new();
         for (_, id) in files {
-            match self.load(id) {
-                Ok(Some(turn)) if &turn.workspace == workspace => {
-                    let first = turn.prompt.trim().lines().next().unwrap_or("New thread");
-                    let title = first.chars().take(72).collect::<String>();
-                    list.push(ThreadSummary { id, title });
+            match self.load_record(id) {
+                Ok(Some(stored)) if &stored.conversation.workspace == workspace => {
+                    list.push(ThreadSummary {
+                        id,
+                        title: stored.display_title(),
+                    });
                     if list.len() == 50 {
                         break;
                     }
@@ -244,6 +317,12 @@ impl ThreadStore {
     fn record(&self, id: Uuid) -> PathBuf {
         self.folder().join(format!("{id}.json"))
     }
+}
+
+// ECMAScript trim(), including BOM and excluding NEXT LINE, which Rust's
+// Unicode whitespace otherwise treats differently.
+fn trim_title(title: &str) -> &str {
+    title.trim_matches(|c: char| c == '\u{feff}' || (c.is_whitespace() && c != '\u{85}'))
 }
 
 fn validate(turn: &Conversation) -> io::Result<()> {
@@ -353,6 +432,132 @@ mod tests {
         store.save(&original).unwrap();
         assert_eq!(store.load(id).unwrap(), Some(latest));
         assert!(fs::read_dir(project).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn renames_legacy_records_without_changing_the_transcript() {
+        let tmp = Temp::new();
+        let project = tmp.0.join("project");
+        fs::create_dir(&project).unwrap();
+        let workspace = Workspace::Local(project.canonicalize().unwrap());
+        let store = ThreadStore::new(tmp.0.join("profile"));
+        fs::create_dir_all(store.folder()).unwrap();
+
+        for version in [1, 2] {
+            let id = Uuid::new_v4();
+            let old_second = Exchange {
+                prompt: "Second".into(),
+                reply: "Second reply".into(),
+            };
+            let mut legacy = serde_json::json!([version, {
+                "id": id, "workspace": workspace, "prompt": "Untouched original\nMore", "reply": "First reply"
+            }]);
+            if version == 2 {
+                legacy[1]["follow_ups"] = serde_json::json!([old_second]);
+            }
+            let old_record = serde_json::to_vec(&legacy).unwrap();
+            fs::write(store.record(id), &old_record).unwrap();
+            let before = store.load(id).unwrap().unwrap();
+            let assert_title = |title: &str| {
+                let history = store.history(&workspace).unwrap();
+                assert_eq!(
+                    history.iter().find(|item| item.id == id).unwrap().title,
+                    title
+                );
+            };
+            assert_title("Untouched original");
+            store
+                .rename(id, &workspace, "   Untouched original  ")
+                .unwrap();
+            assert_eq!(fs::read(store.record(id)).unwrap(), old_record);
+
+            assert_eq!(
+                store
+                    .rename(id, &Workspace::Scratch, "Foreign")
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::NotFound
+            );
+            let blank = store.rename(id, &workspace, " \u{feff}\t").unwrap_err();
+            assert_eq!(blank.kind(), io::ErrorKind::InvalidInput);
+            assert_eq!(blank.to_string(), "Thread title cannot be empty");
+            assert_eq!(fs::read(store.record(id)).unwrap(), old_record);
+
+            let title = "Independent title 🦋".repeat(5);
+            store
+                .rename(id, &workspace, &format!("\u{feff} {title}\u{a0}"))
+                .unwrap();
+            assert_eq!(store.load(id).unwrap(), Some(before.clone()));
+            assert_title(&title); // Not limited to the default 72-character teaser.
+            let renamed = fs::read(store.record(id)).unwrap();
+            let compatible: (u8, Conversation) = serde_json::from_slice(&renamed).unwrap();
+            assert_eq!(compatible, (2, before.clone()));
+            let metadata: serde_json::Value = serde_json::from_slice(&renamed).unwrap();
+            assert_eq!(metadata[1]["title"], title);
+
+            store
+                .rename(id, &workspace, &format!("  {title}  "))
+                .unwrap();
+            assert_eq!(fs::read(store.record(id)).unwrap(), renamed);
+            if version == 1 {
+                store.save(&before).unwrap();
+                assert_eq!(fs::read(store.record(id)).unwrap(), renamed);
+            }
+            let after = store
+                .append(
+                    &before,
+                    Exchange {
+                        prompt: "Another exchange".into(),
+                        reply: "Another reply".into(),
+                    },
+                )
+                .unwrap();
+            assert_eq!(after.prompt, before.prompt);
+            assert_eq!(after.reply, before.reply);
+            assert!(after.follow_ups.starts_with(&before.follow_ups));
+            assert_eq!(after.follow_ups.len(), before.follow_ups.len() + 1);
+            assert_title(&title);
+            assert!(
+                !store
+                    .history(&Workspace::Scratch)
+                    .unwrap()
+                    .iter()
+                    .any(|item| item.id == id)
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_rename_and_append_retain_both_changes() {
+        let tmp = Temp::new();
+        let project = tmp.0.join("project");
+        fs::create_dir(&project).unwrap();
+        let workspace = Workspace::Local(project.canonicalize().unwrap());
+        let store = ThreadStore::new(tmp.0.join("profile"));
+        let original = Conversation {
+            id: Uuid::new_v4(),
+            workspace: workspace.clone(),
+            prompt: "Original".into(),
+            reply: "Original reply".into(),
+            follow_ups: vec![],
+        };
+        store.save(&original).unwrap();
+        let step = Exchange {
+            prompt: "Following".into(),
+            reply: "Following reply".into(),
+        };
+        let starting = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let rename = scope.spawn(|| {
+                starting.wait();
+                store.rename(original.id, &workspace, "My title").unwrap();
+            });
+            starting.wait();
+            store.append(&original, step.clone()).unwrap();
+            rename.join().unwrap();
+        });
+        assert_eq!(store.load(original.id).unwrap().unwrap().follow_ups, [step]);
+        assert_eq!(store.history(&workspace).unwrap()[0].title, "My title");
     }
 
     #[test]
