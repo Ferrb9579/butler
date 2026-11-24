@@ -37,6 +37,7 @@ jobs:
         run: |
           rustup toolchain install 1.100.0 --profile minimal
           cargo +1.100.0 build --locked
+          cargo +1.100.0 test --locked
       - name: Verify and extract pinned reference
         run: |
           mkdir -p artifacts/reference

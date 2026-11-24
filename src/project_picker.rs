@@ -3,7 +3,7 @@
 use incular::{
     controls::{Button, ButtonStyle, ButtonVariant},
     prelude::*,
-    widgets::BackdropFilter,
+    widgets::{BackdropFilter, internal::ActionSurface},
 };
 
 use crate::empty_workspace::{INK, MUTED, PAGE, RULE, label, space};
@@ -71,18 +71,14 @@ pub fn overlay(
                 ),
             ));
             rows.push(
-                Button::with_child(row(
+                ActionSurface::with_child(row(
                     48.0,
                     source("⊞", "Local folder", "Browse a folder on disk", true),
                 ))
-                .style(
-                    ButtonStyle::new()
-                        .height(48.0)
-                        .background(PAGE)
-                        .variant(ButtonVariant::Ghost)
-                        .padding(EdgeInsets::all(0.0)),
-                )
-                .on_click(move || {
+                .label("Local folder")
+                .size(Size::new(574.0, 48.0))
+                .hover_color(Color::rgba(241, 241, 244, 255))
+                .on_press(move || {
                     step.set(Picker::Local);
                 })
                 .into(),

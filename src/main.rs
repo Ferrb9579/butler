@@ -17,7 +17,14 @@ use std::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let state = profile_root();
+    incular::run(application(profile_root(), machine_label())?)?;
+    Ok(())
+}
+
+fn application(
+    state: Option<PathBuf>,
+    device: String,
+) -> Result<Application, Box<dyn std::error::Error>> {
     let profile = state.as_ref().map(Profile::new);
     let projects = state.map(LocalProjects::new);
     let saved_project = projects.as_ref().map(LocalProjects::list).transpose();
@@ -59,8 +66,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let error = Signal::new(completed.err().map(|error| error.to_string()));
     let agents_open = Signal::new(true);
     let scratch_open = Signal::new(false);
-    let device = machine_label();
-
     let app = Application::new(move |_cx| {
         let root = if route.get() == Route::Welcome {
             let route = route.clone();
@@ -141,8 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         Directionality::new(TextDirection::Ltr, root).into()
     })?;
-    incular::run(app)?;
-    Ok(())
+    Ok(app)
 }
 
 fn profile_root() -> Option<PathBuf> {
@@ -170,4 +174,75 @@ fn machine_label() -> String {
         .map(|name| name.trim().to_owned())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "this computer".to_owned())
+}
+
+#[cfg(test)]
+mod ui_tests {
+    use super::*;
+    use incular::testing::Simulation;
+    use std::{fs, thread, time::Duration};
+
+    fn interact<R: Send + 'static>(
+        app: &mut Application,
+        test: impl FnOnce(Simulation) -> R + Send + 'static,
+    ) -> R {
+        let simulation = app.simulation();
+        let worker = thread::spawn(move || test(simulation));
+        for _ in 0..2500 {
+            app.process_simulation_requests();
+            if worker.is_finished() {
+                return worker.join().unwrap();
+            }
+            thread::park_timeout(Duration::from_millis(1));
+        }
+        panic!("simulation request was not serviced");
+    }
+
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let tmp = env::temp_dir().join(format!("butler-ui-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&tmp).unwrap();
+            Self(tmp)
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn imports_a_folder_through_the_picker_then_reopens_the_project() {
+        let tmp = Fixture::new();
+        let root = tmp.0.join("Native test folder");
+        let profile = tmp.0.join("profile");
+        fs::create_dir(&root).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let canonical = root.canonicalize().unwrap();
+        let path = root.to_str().unwrap().to_owned();
+        let mut app = application(Some(profile.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, move |sim| {
+            sim.click("＋ Add project").expect("open source picker");
+            sim.click("Local folder")
+                .expect("choose existing local folder");
+            sim.type_into("Absolute folder path", path)
+                .expect("enter real folder path");
+            sim.click("Open folder").expect("submit local folder");
+        });
+        let saved = LocalProjects::new(&profile).list().unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].root, canonical);
+        assert!(fs::read_dir(&root).unwrap().next().is_none());
+        drop(app);
+        let mut reopened = application(Some(profile), "Fixture".into()).unwrap();
+        interact(&mut reopened, |sim| {
+            sim.click("Native test folder")
+                .expect("reopened UI displays the imported project");
+            assert!(
+                sim.click("＋ Add project").is_err(),
+                "reopened application must not show the empty workspace"
+            );
+        });
+    }
 }

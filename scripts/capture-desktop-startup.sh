@@ -127,10 +127,10 @@ capture_one() (
   elif [[ "$name" == butler-import ]]; then
     xdotool windowfocus "$window" mousemove --window "$window" 670 462 click 1
     xdotool mousemove 1390 890
-    await_text "$window" "$out/butler-add-project.png" 'Local folder' '260x24+365+214'
+    await_text "$window" "$out/butler-add-project.png" 'Local[[:space:]]*folder' '260x24+365+214'
     xdotool windowfocus "$window" mousemove --window "$window" 438 230 click 1
     xdotool mousemove 1390 890
-    await_text "$window" "$out/butler-local-folder.png" 'Absolute folder path' '270x40+390+84'
+    await_text "$window" "$out/butler-local-folder.png" 'Absolute[[:space:]]*folder[[:space:]]*path' '270x40+390+84'
     xdotool windowfocus "$window" mousemove --window "$window" 456 104 click 1
     xdotool type --clearmodifiers "$project_fixture"
     await_text "$window" "$out/butler-local-folder-typed.png" 'ParityFixture' '510x40+390+84'
