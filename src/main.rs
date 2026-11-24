@@ -2,6 +2,8 @@ mod about_settings;
 mod empty_workspace;
 mod message_jump;
 mod message_search;
+mod project_favicon;
+mod project_icon_view;
 mod project_identity;
 mod project_picker;
 mod provider_settings;
@@ -124,6 +126,8 @@ fn application_with_transport(
     let thread_projects = ThreadProjects::new();
     let sidebar_search = sidebar_search::Search::new();
     let message_lookup = message_search::Lookup::default();
+    let project_icon_lookup = project_icon_view::Lookup::default();
+    let project_icon_revision = Signal::new(0_u64);
     let message_history_revision = Signal::new(0_u64);
     let project_busy = Signal::new(false);
     let queued_project = Rc::new(RefCell::new(None::<ProjectWork>));
@@ -184,6 +188,11 @@ fn application_with_transport(
                 let settings_open = settings_open.clone();
                 let settings_navigation = settings_navigation.clone();
                 let title = project.as_ref().map(|project| project.title());
+                let project_icon = project_icon_lookup.poll(
+                    cx,
+                    project.as_ref().map(|project| project.root.as_path()),
+                    project_icon_revision.get(),
+                );
                 let add_project = title.as_ref().map(|_| {
                     let picker = picker.clone();
                     let path = path.clone();
@@ -241,6 +250,7 @@ fn application_with_transport(
                 let shortcut_thread = current.as_ref().map(|turn| turn.id);
                 let workspace = workspace::draft(
                     title,
+                    project_icon,
                     history,
                     messages,
                     current,
@@ -412,6 +422,7 @@ fn application_with_transport(
             let selected_thread = selected_thread.clone();
             let search_for_project = sidebar_search.clone();
             let jump_for_project = message_jump.clone();
+            let icon_for_project = project_icon_revision.clone();
             #[cfg(test)]
             let fixture_for_project = fixture.clone();
             let finish_project = move |result: std::io::Result<(LocalProject, Option<String>)>,
@@ -443,6 +454,7 @@ fn application_with_transport(
                         selected_thread.set(None);
                         search_for_project.reset();
                         active_project.set(Some(project));
+                        icon_for_project.set(icon_for_project.get().wrapping_add(1));
                         step.set(Picker::Closed);
                     }
                     Err(e) => {
@@ -1392,6 +1404,104 @@ mod ui_tests {
                 .collect::<Vec<_>>(),
             ["Project Alpha", "Project Beta", "Project Removed"]
         );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn active_project_uses_local_icon_in_sidebar_and_breadcrumb_then_clears_it() {
+        use incular::rendering::PaintCommand;
+        let tmp = Fixture::new();
+        let profile = tmp.0.join("profile");
+        let with = tmp.0.join("With icon");
+        let without = tmp.0.join("Without icon");
+        fs::create_dir(&with).unwrap();
+        fs::create_dir(&without).unwrap();
+        let mut source = Vec::new();
+        let pixel = [21, 88, 177, 255];
+        {
+            let mut encoder = png::Encoder::new(&mut source, 4, 2);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&pixel.repeat(8))
+                .unwrap();
+        }
+        fs::write(with.join("favicon.png"), &source).unwrap();
+        let store = LocalProjects::new(&profile);
+        store.open(&without).unwrap();
+        store.open(&with).unwrap();
+        Profile::new(&profile).complete_onboarding().unwrap();
+        let mut app = application(Some(profile), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        let window = app.active_window_ids()[0];
+        let frame = |app: &mut Application| {
+            app.process_runtime_work();
+            let (list, _) = app
+                .run_window_frame_at(
+                    window,
+                    Constraints::tight(Size::new(1280.0, 800.0)),
+                    std::time::Instant::now(),
+                )
+                .unwrap()
+                .unwrap();
+            let mut transforms = vec![incular::core::Transform::IDENTITY];
+            let mut draws = Vec::new();
+            for command in list.commands() {
+                match command {
+                    PaintCommand::PushTransform { transform } => {
+                        transforms.push(transforms.last().unwrap().then(*transform));
+                    }
+                    PaintCommand::PopTransform => {
+                        transforms.pop();
+                    }
+                    PaintCommand::Image {
+                        image, destination, ..
+                    } if image.decoded().pixels().as_ref() == pixel.repeat(8).as_slice() => {
+                        draws.push((
+                            destination.size,
+                            transforms
+                                .last()
+                                .unwrap()
+                                .transform_point(destination.origin),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            draws
+        };
+        let mut draws = Vec::new();
+        for _ in 0..80 {
+            draws = frame(&mut app);
+            if draws.len() == 2 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            draws.iter().any(|(size, _)| *size == Size::new(16.0, 8.0)),
+            "sidebar preserves 2:1 icon: {draws:?}"
+        );
+        assert!(
+            draws
+                .iter()
+                .any(|(size, origin)| *size == Size::new(14.0, 7.0)
+                    && (270.0..310.0).contains(&origin.x)),
+            "breadcrumb uses a 2:1 icon near the leading edge: {draws:?}"
+        );
+        interact(&mut app, |sim| {
+            sim.click("New thread").unwrap();
+            sim.type_into("New thread in...", "Without icon").unwrap();
+            sim.press(Code::Enter).unwrap();
+            sim.focus("New thread in Without icon").unwrap();
+        });
+        assert!(
+            frame(&mut app).is_empty(),
+            "switching project must not show the old icon"
+        );
+        assert_eq!(fs::read(with.join("favicon.png")).unwrap(), source);
+        assert_eq!(fs::read_dir(without).unwrap().count(), 0);
     }
 
     #[test]

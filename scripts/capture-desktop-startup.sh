@@ -368,11 +368,11 @@ click_project_control() {
 
 await_new_project_workspace() {
   local window=$1 file=$2 tick
-  # The title must be in the workspace header, not still in the picker or
-  # preview. Match the rendered no-provider workspace, not just its title.
+  # Match the selected project in the workspace composer, not text in
+  # the picker or the breadcrumb's responsive layout; confirm the gate too.
   for ((tick=0; tick<15; tick++)); do
     "${capture[@]}" -window "$window" "$file" || return 1
-    if settings_phrase "$file" '450x80+245+4' "$new_project_title" 11 >/dev/null &&
+    if settings_phrase "$file" '380x33+485+290' "$new_project_title" 7 >/dev/null &&
        settings_phrase "$file" '600x64+295+333' \
          'Enable a provider in Settings to send a message' 7 >/dev/null; then
       return 0
@@ -860,9 +860,10 @@ thread_find_count_label() {
 }
 
 capture_native_thread_find() {
-  local window=$1 app=$2 title=$3 tick coords x y anchor_y input
+  local window=$1 app=$2 title=$3 coords x y anchor_y input title_crop deadline
   local prefix="$out/$app-thread-find" bar='278x92+988+37'
-  click_project_control "$window" "$prefix-thread-row.png" '246x650+6+75' "$title" 11 || return 1
+  title_crop=$(thread_find_row_crop "$app") || return 1
+  click_project_control "$window" "$prefix-thread-row.png" "$title_crop" "$title" 11 || return 1
   deadline=$((SECONDS + 60))
   while (( SECONDS < deadline )); do
     "${capture[@]}" -window "$window" "$prefix-transcript.png" || return 1

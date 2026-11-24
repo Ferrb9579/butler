@@ -14,6 +14,7 @@ use crate::empty_workspace::{INK, MUTED, PAGE, RULE, WHITE, icon_label, label, s
 
 pub fn draft(
     project: Option<String>,
+    project_icon: Option<incular::image::ImageHandle>,
     history: Vec<ThreadSummary>,
     messages: Results,
     selected: Option<Conversation>,
@@ -30,7 +31,7 @@ pub fn draft(
     #[cfg(test)] offline: Option<OfflineDraft>,
 ) -> Widget {
     let title = project.clone().unwrap_or_else(|| "No project".into());
-    let project_crumb = workspace_project(project.as_deref(), start_here);
+    let project_crumb = workspace_project(project.as_deref(), project_icon.as_ref(), start_here);
     let selected = selected.map(Rc::new);
     let rendered_query = search.query();
     let sidebar_settings = open_settings.clone();
@@ -166,6 +167,7 @@ pub fn draft(
         let query = search.query();
         sidebar(
             project.as_deref(),
+            project_icon.clone(),
             add_project.clone(),
             Some(new_thread.clone()),
             sidebar_settings.clone(),
@@ -291,10 +293,14 @@ fn breadcrumb_text(text: &str, color: Color) -> Widget {
         .into()
 }
 
-fn workspace_project(project: Option<&str>, start_here: impl Fn() + 'static) -> Widget {
+fn workspace_project(
+    project: Option<&str>,
+    project_icon: Option<&incular::image::ImageHandle>,
+    start_here: impl Fn() + 'static,
+) -> Widget {
     let title = project.unwrap_or("No project");
     let mark = match project {
-        Some(title) => crate::project_identity::widget(title, 14.0, false),
+        Some(title) => crate::project_icon_view::project_mark(title, project_icon, 14.0),
         None => icon("message-square-dashed", 14.0, MUTED),
     };
     let contents: Widget = Row::new(vec![
@@ -305,16 +311,13 @@ fn workspace_project(project: Option<&str>, start_here: impl Fn() + 'static) -> 
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .spacing(6.0)
     .into();
-    Button::with_child(format!("New thread in {title}"), contents)
-        .style(
-            ButtonStyle::new()
-                .variant(ButtonVariant::Ghost)
-                .height(28.0)
-                .background(PAGE)
-                .padding(EdgeInsets::ZERO)
-                .border_radius(4.0),
-        )
-        .on_click(start_here)
+    // T3's breadcrumb is inline-flex rather than a full-width aligned
+    // button. Let the constrained child report its natural width directly.
+    incular::widgets::internal::ActionSurface::with_child(contents)
+        .label(format!("New thread in {title}"))
+        .size(Size::new(0.0, 28.0))
+        .mouse_cursor(incular::widgets::MouseCursor::Click)
+        .on_press(start_here)
         .into()
 }
 

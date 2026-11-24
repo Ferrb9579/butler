@@ -9,6 +9,7 @@ incular = { git = "https://github.com/FabortLabs/incular.git", rev = "71feef9228
 icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
 icu_properties = { version = "2.4", default-features = false, features = ["compiled_data"] }
 icu_segmenter = { version = "2.4", default-features = false, features = ["compiled_data"] }
+png = { version = "0.18.1", default-features = false }
 uuid = { version = "1.29", features = ["v4", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

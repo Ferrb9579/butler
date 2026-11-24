@@ -67,6 +67,7 @@ pub fn view(
     Row::new(vec![
         sidebar(
             None,
+            None,
             Some(open_project),
             None::<fn()>,
             open_settings,
@@ -91,6 +92,7 @@ pub fn view(
 
 pub(crate) fn sidebar(
     project: Option<&str>,
+    project_icon: Option<incular::image::ImageHandle>,
     open_project: Option<impl Fn() + 'static>,
     new_thread: Option<impl Fn() + 'static>,
     open_settings: impl Fn() + 'static,
@@ -122,7 +124,7 @@ pub(crate) fn sidebar(
             .padding(EdgeInsets::symmetric(16.0, 0.0))
             .child(
                 Row::new(vec![
-                    crate::project_identity::widget(title, 16.0, false),
+                    crate::project_icon_view::project_mark(title, project_icon.as_ref(), 16.0),
                     Expanded::new(name).into(),
                 ])
                 .spacing(10.0)
