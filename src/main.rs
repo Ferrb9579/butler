@@ -20,7 +20,7 @@ use butler::{
     threads::{Conversation, ThreadStore, Workspace},
 };
 use incular::prelude::*;
-use project_picker::{Picker, ProjectRequest, RemoteFlow};
+use project_picker::{Picker, ProjectRequest, RemoteFlow, ThreadProjects};
 use std::{
     cell::RefCell,
     env,
@@ -112,6 +112,7 @@ fn application_with_transport(
     let new_project_name = TextEditingController::new();
     let new_project_preview = Signal::new(String::new());
     let remote_flow = RemoteFlow::new();
+    let thread_projects = ThreadProjects::new();
     let project_busy = Signal::new(false);
     let queued_project = Rc::new(RefCell::new(None::<ProjectWork>));
     let completed = profile
@@ -183,6 +184,10 @@ fn application_with_transport(
                 });
                 let selected = selected_thread.clone();
                 let new_draft = selected_thread.clone();
+                let choose_project = thread_projects.clone();
+                let choose_step = picker.clone();
+                let choose_store = projects.clone();
+                let choose_error = picker_error.clone();
                 let store = history_store.clone();
                 let show_error = history_error.clone();
                 #[cfg(test)]
@@ -227,7 +232,20 @@ fn application_with_transport(
                         }
                     },
                     move || {
-                        new_draft.set(None);
+                        let choices = choose_store
+                            .as_ref()
+                            .and_then(|store| store.list().ok())
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|project| project.root.is_dir())
+                            .collect::<Vec<_>>();
+                        if choices.len() > 1 {
+                            choose_project.begin(choices);
+                            choose_error.set(None);
+                            choose_step.set(Picker::ThreadProjects);
+                        } else {
+                            new_draft.set(None);
+                        }
                     },
                     move || {
                         settings_navigation.open_providers();
@@ -368,6 +386,7 @@ fn application_with_transport(
             let work = queued_project.clone();
             let clear_error = picker_error.clone();
             let home_for_clone = home.clone();
+            let active_for_clone = active_root.clone();
             let desktop = project_picker::overlay(
                 workspace,
                 picker.clone(),
@@ -375,6 +394,9 @@ fn application_with_transport(
                 new_project_name.clone(),
                 new_project_preview.clone(),
                 remote_flow.clone(),
+                thread_projects.clone(),
+                &device,
+                active_root.as_deref(),
                 projects.as_ref().map(|store| store.data_dir().to_owned()),
                 creating,
                 home.clone(),
@@ -399,7 +421,7 @@ fn application_with_transport(
                                 projects.as_ref(),
                                 &destination,
                                 home_for_clone.as_deref(),
-                                active_root.as_deref(),
+                                active_for_clone.as_deref(),
                             );
                             match result {
                                 Ok(destination) => {
@@ -414,6 +436,28 @@ fn application_with_transport(
                                     finish_project(Err(error), ProjectAction::Clone);
                                 }
                             }
+                        }
+                        ProjectRequest::StartThread(path) => {
+                            let result = projects
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    std::io::Error::other(
+                                        "No local profile directory is available.",
+                                    )
+                                })
+                                .and_then(|store| {
+                                    if path.canonicalize()? != path
+                                        || !store.list()?.iter().any(|saved| saved.root == path)
+                                    {
+                                        return Err(std::io::Error::new(
+                                            std::io::ErrorKind::NotFound,
+                                            "The saved project is no longer available.",
+                                        ));
+                                    }
+                                    store.open(&path)
+                                })
+                                .map(|project| (project, None));
+                            finish_project(result, ProjectAction::Open);
                         }
                         ProjectRequest::Open(input) => {
                             let result = projects
@@ -891,6 +935,68 @@ mod ui_tests {
             assert!(sim.focus("Project name").is_err());
             sim.focus("＋ Add project").unwrap();
         });
+    }
+
+    #[test]
+    fn new_thread_chooser_filters_projects_and_only_switches_when_chosen() {
+        let tmp = Fixture::new();
+        let state = tmp.0.join("profile");
+        let first = tmp.0.join("Project Alpha");
+        let second = tmp.0.join("Project Beta");
+        let missing = tmp.0.join("Project Removed");
+        for path in [&first, &second, &missing] {
+            fs::create_dir(path).unwrap();
+        }
+        Profile::new(&state).complete_onboarding().unwrap();
+        let store = LocalProjects::new(&state);
+        store.open(&missing).unwrap();
+        let alpha = store.open(&first).unwrap();
+        let beta = store.open(&second).unwrap();
+        let history = ThreadStore::new(&state);
+        for (project, subject) in [(alpha, "Alpha memory"), (beta, "Beta memory")] {
+            history
+                .save(&Conversation {
+                    id: uuid::Uuid::new_v4(),
+                    workspace: Workspace::Local(project.root),
+                    prompt: subject.into(),
+                    reply: format!("{subject} reply"),
+                    follow_ups: Vec::new(),
+                })
+                .unwrap();
+        }
+        fs::remove_dir(&missing).unwrap();
+        let before = store.clone();
+        let mut app = application(Some(state), Some(tmp.0.clone()), "Fixture".into()).unwrap();
+        interact(&mut app, move |sim| {
+            sim.click("Open thread: Beta memory").unwrap();
+            sim.click("New thread").unwrap();
+            sim.focus("New thread in...").unwrap();
+            sim.type_text("ALPHA").unwrap();
+            sim.focus("New thread in Project Alpha").unwrap();
+            assert!(sim.focus("New thread in Project Beta").is_err());
+            assert!(sim.focus("New thread in Project Removed").is_err());
+            assert_eq!(before.list().unwrap()[0].title(), "Project Beta");
+            sim.focus("New thread in...").unwrap();
+            sim.press("Escape".parse().unwrap()).unwrap();
+            assert_eq!(before.list().unwrap()[0].title(), "Project Beta");
+            sim.click("Beta memory reply").unwrap();
+            sim.click("New thread").unwrap();
+            sim.focus("New thread in...").unwrap();
+            sim.type_text("alpha").unwrap();
+            sim.press("Enter".parse().unwrap()).unwrap();
+            sim.focus("Open provider settings").unwrap();
+            sim.focus("Open thread: Alpha memory").unwrap();
+            assert!(sim.focus("Open thread: Beta memory").is_err());
+        });
+        assert_eq!(
+            store
+                .list()
+                .unwrap()
+                .iter()
+                .map(LocalProject::title)
+                .collect::<Vec<_>>(),
+            ["Project Alpha", "Project Beta", "Project Removed"]
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ use incular::{
 
 use butler::{
     clone_runner, managed_projects,
-    projects::FolderListing,
+    projects::{FolderListing, LocalProject},
     remote_projects::{self, RemoteProject},
 };
 use std::{
@@ -28,15 +28,52 @@ pub enum Picker {
     New,
     RemoteUrl,
     CloneDestination,
+    ThreadProjects,
 }
 
 pub enum ProjectRequest {
     Open(String),
+    StartThread(PathBuf),
     Create(String),
     Clone {
         remote: RemoteProject,
         destination: String,
     },
+}
+
+#[derive(Clone)]
+pub struct ThreadProjects {
+    query: TextEditingController,
+    filter: Signal<String>,
+    choices: Signal<Vec<LocalProject>>,
+}
+
+impl ThreadProjects {
+    pub fn new() -> Self {
+        Self {
+            query: TextEditingController::new(),
+            filter: Signal::new(String::new()),
+            choices: Signal::new(Vec::new()),
+        }
+    }
+
+    pub fn begin(&self, choices: Vec<LocalProject>) {
+        self.query.clear();
+        self.filter.set(String::new());
+        self.choices.set(choices);
+    }
+
+    fn matching(&self, query: &str) -> Vec<LocalProject> {
+        let query = query.to_lowercase();
+        self.choices
+            .get()
+            .into_iter()
+            .filter(|project| {
+                let text = format!("{} {}", project.title(), project.root.display()).to_lowercase();
+                query.split_whitespace().all(|term| text.contains(term))
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone)]
@@ -156,6 +193,9 @@ pub fn overlay(
     new_name: TextEditingController,
     name_preview: Signal<String>,
     remote: RemoteFlow,
+    thread_projects: ThreadProjects,
+    device: &str,
+    current_project: Option<&Path>,
     project_data: Option<PathBuf>,
     creating: bool,
     home: Option<PathBuf>,
@@ -272,7 +312,26 @@ pub fn overlay(
                 })
                 .into(),
             Widget::from(SizedBox::new().width(8.0)),
-            if current == Picker::RemoteUrl {
+            if current == Picker::ThreadProjects {
+                let edit = thread_projects.clone();
+                let search = thread_projects.clone();
+                let submit = submit.clone();
+                Expanded::new(
+                    EditableText::new(thread_projects.query.clone())
+                        .placeholder("New thread in...")
+                        .placeholder_color(MUTED)
+                        .style(crate::typography::interface().font_size(15.0).color(INK))
+                        .on_changed(move |value| {
+                            edit.filter.set(value.to_owned());
+                        })
+                        .on_submit(move |value| {
+                            if let Some(project) = search.matching(&value).into_iter().next() {
+                                submit(ProjectRequest::StartThread(project.root));
+                            }
+                        }),
+                )
+                .into()
+            } else if current == Picker::RemoteUrl {
                 let edit = remote.clone();
                 let review = remote.clone();
                 let step = step.clone();
@@ -661,6 +720,61 @@ pub fn overlay(
                     30.0,
                     label(
                         &error,
+                        13.0,
+                        FontWeight::W400,
+                        Color::rgba(161, 38, 38, 255),
+                    ),
+                ));
+            }
+        }
+        Picker::ThreadProjects => {
+            rows.push(row(28.0, label("Projects", 12.0, FontWeight::W500, MUTED)));
+            let matches = thread_projects.matching(&thread_projects.filter.get());
+            if matches.is_empty() {
+                rows.push(row(
+                    48.0,
+                    label("No projects found", 14.0, FontWeight::W400, MUTED),
+                ));
+            } else {
+                let options = matches
+                    .into_iter()
+                    .map(|project| {
+                        let title = project.title();
+                        let location = format!("{device} · {}", project.root.display());
+                        let is_current = current_project == Some(project.root.as_path());
+                        let title_with_status = if is_current {
+                            format!("{title}  ·  Current")
+                        } else {
+                            title.clone()
+                        };
+                        let submit = submit.clone();
+                        ActionSurface::with_child(row(
+                            48.0,
+                            source("palette-folder-git", &title_with_status, &location, true),
+                        ))
+                        .label(format!("New thread in {title}"))
+                        .size(Size::new(574.0, 48.0))
+                        .hover_color(Color::rgba(241, 241, 244, 255))
+                        .on_press(move || submit(ProjectRequest::StartThread(project.root.clone())))
+                        .into()
+                    })
+                    .collect::<Vec<Widget>>();
+                rows.push(
+                    Container::new()
+                        .height((options.len() as f32 * 48.0).min(240.0))
+                        .child(SingleChildScrollView::new(
+                            Column::new(options)
+                                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                                .main_axis_size(MainAxisSize::Min),
+                        ))
+                        .into(),
+                );
+            }
+            if let Some(message) = error {
+                rows.push(row(
+                    30.0,
+                    label(
+                        &message,
                         13.0,
                         FontWeight::W400,
                         Color::rgba(161, 38, 38, 255),

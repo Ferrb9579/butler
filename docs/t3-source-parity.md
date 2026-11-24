@@ -128,3 +128,11 @@ The active-workspace sidebar ports the 28 px FolderPlus button from
 `SidebarThreadHeader.tsx:61–173`. It opens the same Add project palette,
 without making project headers switch the active chat. The multi-project
 thread destination chooser and the separate filter are still unported.
+
+For multiple available local projects, the sidebar's New thread action
+opens a searchable project chooser following `Sidebar.tsx:2966–2995` and
+`CommandPaletteProjectItems.tsx:77–102`. Selecting a saved canonical folder
+starts a fresh draft and loads only that project's thread list. Cancelling
+or filtering leaves the active transcript and registry untouched. Butler's
+local recent-first ordering and simple title/path filtering are not the
+reference's general project search, fuzzy ranking, shortcuts, or device groups.
