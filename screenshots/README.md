@@ -70,3 +70,22 @@ Butler's About also lacks updater and mobile controls. The images predate
 retaining the sidebar scroll position across Butler routes.
 
 [about-run]: https://github.com/Ferrb9579/butler/actions/runs/45365107987
+
+## New project form (diagnostic pairs)
+
+| Fixture | T3 Code | Butler | Raw differing pixels |
+| --- | --- | --- | --- |
+| Empty name | [PNG](t3/new-project-empty-light-1280x800.png) | [PNG](butler/new-project-empty-light-1280x800.png) | 435,108 of 1,024,000 |
+| Same typed title | [PNG](t3/new-project-named-light-1280x800.png) | [PNG](butler/new-project-named-light-1280x800.png) | 435,011 of 1,024,000 |
+
+[Native run 45368061459][new-project-run], fresh Linux X11 profiles,
+light theme and 1280×800. T3 Code was v0.1.11
+(`59651c1761f6c63e9b6056839067066968e6a406`); Butler was
+`fff3424d8cb67d3d2eb21a30ab5668d638e2529e`. The named form uses
+`Native Created Project` in both apps. The reference form was not submitted;
+the separate Butler workflow did create and reopen its temporary project.
+The two data roots differ, as do the footer shortcuts, icons, focus-on-open,
+spacing, and underlying window chrome. These are genuine route pairs,
+not a pixel parity pass.
+
+[new-project-run]: https://github.com/Ferrb9579/butler/actions/runs/45368061459
