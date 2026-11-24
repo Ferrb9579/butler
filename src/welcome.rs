@@ -21,6 +21,7 @@ const AGENT_TRIGGER: &str = "Set up an agent";
 const TRIGGER_INK: Color = Color::rgba(24, 24, 27, 255);
 const TRIGGER_MUTED: Color = Color::rgba(113, 113, 123, 255);
 const TRIGGER_RING: Color = Color::rgba(27, 78, 216, 255);
+const AGENTS_LANE_START: f32 = 96.0 + 40.0;
 
 pub fn view(
     device: &str,
@@ -50,7 +51,7 @@ pub fn view(
                 ),
                 gap(48.0),
                 divider(),
-                gap(18.0),
+                gap(16.0),
                 agents_section(narrow, expanded, agents_open.clone()),
                 gap(16.0),
                 divider(),
@@ -158,7 +159,7 @@ fn agent_trigger(expanded: bool, agents_open: Signal<bool>) -> Widget {
 fn agents_section(narrow: bool, expanded: bool, agents_open: Signal<bool>) -> Widget {
     let mut right = vec![agent_trigger(expanded, agents_open)];
     if expanded {
-        right.push(gap(6.0));
+        // The reference panel's provider grid touches the 40px trigger.
         let left = [
             ("Antigravity", "Turn on"),
             ("Codex", "Set up"),
@@ -192,6 +193,7 @@ fn agents_section(narrow: bool, expanded: bool, agents_open: Signal<bool>) -> Wi
     section(
         "Agents",
         narrow,
+        AGENTS_LANE_START,
         Column::new(right)
             .cross_axis_alignment(CrossAxisAlignment::Stretch)
             .into(),
@@ -226,11 +228,21 @@ fn phone_section(narrow: bool) -> Widget {
     section(
         "Phone",
         narrow,
-        agent(("Use Butler on your phone", "Set up")),
+        138.0,
+        setup_row(
+            Container::new()
+                .width(30.0)
+                .alignment(Alignment::CENTER_LEFT)
+                .child(icon("smartphone", 16.0, MUTED))
+                .into(),
+            "Use Butler on your phone",
+            "Set up",
+            0.0,
+        ),
     )
 }
 
-fn section(label: &str, narrow: bool, body: Widget) -> Widget {
+fn section(label: &str, narrow: bool, lane_start: f32, body: Widget) -> Widget {
     let label = Container::new()
         .height(32.0)
         .alignment(Alignment::CENTER_LEFT)
@@ -241,7 +253,7 @@ fn section(label: &str, narrow: bool, body: Widget) -> Widget {
             .into()
     } else {
         Row::new(vec![
-            Widget::from(SizedBox::new().width(138.0).child(label)),
+            Widget::from(SizedBox::new().width(lane_start).child(label)),
             Expanded::new(body).into(),
         ])
         .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -250,25 +262,30 @@ fn section(label: &str, narrow: bool, body: Widget) -> Widget {
 }
 
 fn agent((name, action): (&str, &str)) -> Widget {
+    setup_row(
+        row_icon(crate::settings_icons::provider_brand(
+            name, 16.0, INK, false,
+        )),
+        name,
+        action,
+        12.0,
+    )
+}
+
+fn setup_row(leading: Widget, name: &str, action: &str, spacing: f32) -> Widget {
     Container::new()
         .height(36.0)
-        .child(Row::new(vec![
-            Widget::from(
-                Container::new()
-                    .width(30.0)
-                    .alignment(Alignment::CENTER_LEFT)
-                    .child(if name == "Use Butler on your phone" {
-                        icon("smartphone", 16.0, MUTED)
-                    } else {
-                        crate::settings_icons::provider_brand(name, 16.0, INK, false)
-                    }),
-            ),
-            Expanded::new(text(name, 14.0, FontWeight::W400, INK)).into(),
-            Button::new(action)
-                .style(button_style(24.0, Color::rgba(255, 255, 255, 255), INK))
-                .enabled(false)
-                .into(),
-        ]))
+        .child(
+            Row::new([
+                leading,
+                Expanded::new(text(name, 14.0, FontWeight::W400, INK)).into(),
+                Button::new(action)
+                    .style(button_style(24.0, Color::rgba(255, 255, 255, 255), INK))
+                    .enabled(false)
+                    .into(),
+            ])
+            .spacing(spacing),
+        )
         .into()
 }
 
@@ -346,7 +363,7 @@ mod tests {
             TextDirection::Ltr,
             Align::new(
                 Alignment::TOP_LEFT,
-                section("Agents", false, registry_row()),
+                section("Agents", false, AGENTS_LANE_START, registry_row()),
             ),
         );
         let mut runtime = Runtime::new(root.into()).unwrap();
@@ -382,9 +399,9 @@ mod tests {
         let [mark] = marks.as_slice() else {
             panic!("expected one ACP mark, got {marks:?}");
         };
-        // The existing section's content starts at x138. The original wide
+        // The Agents section's content starts at x136. The original wide
         // mark aspect-fits 16px with 2px on both sides of its 20px slot.
-        assert!((mark.origin.x - 140.0).abs() < 0.15, "{mark:?}");
+        assert!((mark.origin.x - 138.0).abs() < 0.15, "{mark:?}");
         assert!((mark.size.width - 16.0).abs() < 0.15, "{mark:?}");
         assert!(
             (mark.origin.y + mark.size.height / 2.0 - 18.0).abs() < 0.15,
@@ -392,6 +409,107 @@ mod tests {
         );
         assert!(
             (mark.size.height - 16.0 * 220.0 / 576.0).abs() < 0.15,
+            "{mark:?}"
+        );
+    }
+
+    #[test]
+    fn desktop_agent_grid_uses_the_reference_lanes_and_shared_vertical_spacing() {
+        crate::typography::register();
+        let root = Directionality::new(
+            TextDirection::Ltr,
+            view("Local device", Signal::new(true), None, || {}),
+        );
+        let mut runtime = Runtime::new(root.into()).unwrap();
+        let (display, _) = runtime
+            .run_frame(Constraints::tight(Size::new(1280.0, 800.0)))
+            .unwrap();
+
+        let semantics = runtime.tree().semantics();
+        let mut pending = semantics.roots().to_vec();
+        let mut bounds = std::collections::HashMap::new();
+        while let Some(id) = pending.pop() {
+            let Some(node) = semantics.node(id) else {
+                continue;
+            };
+            if let Some(label) = node.label.as_deref() {
+                bounds.insert(label, node.bounds);
+            }
+            pending.extend(node.children.iter().copied());
+        }
+        let trigger = bounds[AGENT_TRIGGER];
+        for (index, (left, right)) in [
+            ("Antigravity", "Claude"),
+            ("Codex", "Cursor"),
+            ("fx", "Grok"),
+            ("Kiro", "Muse Code"),
+            ("OpenCode", "Pi"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let top = trigger.origin.y + trigger.size.height + 36.0 * index as f32;
+            let left = bounds[left];
+            let right = bounds[right];
+            assert_eq!(left.origin.x, 448.0);
+            assert_eq!(right.origin.x, 756.0);
+            assert_eq!(left.origin.y, right.origin.y);
+            assert!(left.origin.y >= top && left.origin.y + left.size.height <= top + 36.0);
+        }
+        assert_eq!(bounds["More agents in the ACP Registry"].origin.x, 448.0);
+        assert_eq!(bounds["Use Butler on your phone"].origin.x, 448.0);
+
+        let mut matrices = vec![Matrix::IDENTITY];
+        let mut divider_rows = Vec::new();
+        let mut acp = None;
+        let registry_top = trigger.origin.y + trigger.size.height + 5.0 * 36.0;
+        for command in display.commands() {
+            let divider = match command {
+                PaintCommand::PushTransform { transform } => {
+                    matrices.push(matrices.last().unwrap().then(*transform));
+                    continue;
+                }
+                PaintCommand::PopTransform => {
+                    matrices.pop();
+                    continue;
+                }
+                PaintCommand::Rect { rect, color } if *color == RULE => rect,
+                PaintCommand::RRect {
+                    rrect,
+                    brush: Brush::Solid(color),
+                } if *color == RULE => &rrect.rect,
+                PaintCommand::FillPath {
+                    path,
+                    brush: Brush::Solid(color),
+                    ..
+                } if *color == Color::BLACK => {
+                    let rect = matrices
+                        .last()
+                        .unwrap()
+                        .transform_rect_bbox(path.bounds().unwrap());
+                    if rect.origin.y >= registry_top && rect.origin.y < registry_top + 36.0 {
+                        acp = Some(rect);
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            if divider.size == Size::new(720.0, 1.0) {
+                divider_rows.push(matrices.last().unwrap().transform_point(divider.origin));
+            }
+        }
+        // The default-font heading above the section can vary by platform.
+        // Pin the actual offsets between its first rule, trigger and grid.
+        assert_eq!(divider_rows[0].x, 280.0);
+        assert_eq!(trigger.origin.y - divider_rows[0].y, 17.0);
+        assert_eq!(
+            divider_rows[1],
+            Offset::new(280.0, registry_top + 36.0 + 16.0)
+        );
+        let mark = acp.expect("ACP Registry mark is painted in the agent section");
+        assert!((mark.origin.x - 418.0).abs() < 0.15, "{mark:?}");
+        assert!(
+            (mark.origin.y + mark.size.height / 2.0 - (registry_top + 18.0)).abs() < 0.15,
             "{mark:?}"
         );
     }
@@ -406,11 +524,12 @@ mod tests {
             );
         };
         for (width, narrow, expanded) in [(720.0, false, false), (402.0, true, true)] {
-            let left = if narrow { 0.0 } else { 138.0 };
+            let left = if narrow { 0.0 } else { AGENTS_LANE_START };
             let y = if narrow { 32.0 } else { 0.0 };
             let widget = section(
                 "Agents",
                 narrow,
+                AGENTS_LANE_START,
                 agent_trigger(expanded, Signal::new(expanded)),
             );
             let root =

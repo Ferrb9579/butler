@@ -1081,7 +1081,8 @@ mod ui_tests {
         let ((_, bounds, open), visible) = observe(&mut app);
         assert_eq!(open, Some(true));
         assert!(visible);
-        assert_eq!(bounds.size, Size::new(582.0, 40.0));
+        assert_eq!(bounds.origin.x, 416.0);
+        assert_eq!(bounds.size, Size::new(584.0, 40.0));
         let right = Offset::new(
             bounds.origin.x + bounds.size.width - 3.0,
             bounds.origin.y + 20.0,

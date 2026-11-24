@@ -25,6 +25,14 @@ Paths below are relative to the pinned upstream tree.
   RowIcon slot, with the source 16 px aspect-fit box. The existing
   light catalogue row uses the published pure-black mark; its disabled
   Browse control remains unchanged. Other provider marks are independent.
+- On desktop, `WelcomePage.tsx:384–407,679–707,1252–1265` sets the Agents
+  band to a 16 px top and bottom inset, 96 px title column plus 40 px gap,
+  and a two-column grid with a 32 px gap immediately after the trigger.
+  Both columns use centered 20 px slots for their 16 px marks and a 12 px
+  gap before the names. Retained tests check labels at x448 and x756,
+  the ACP mark at x418, and the actual offsets of the shared dividers.
+  Phone's horizontal layout is unchanged; its section follows the updated
+  Agents height. No new mark, provider action, or mobile parity is claimed.
 
 ## Settings / Providers
 
