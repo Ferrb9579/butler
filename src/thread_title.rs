@@ -107,7 +107,13 @@ impl Editor {
             .into()
     }
 
-    pub fn view(&self, id: Uuid, title: &str, commit: impl Fn(Uuid, &str) + 'static) -> Widget {
+    pub fn view(
+        &self,
+        id: Uuid,
+        title: &str,
+        commit: impl Fn(Uuid, &str) + 'static,
+        find: impl Fn() + 'static,
+    ) -> Widget {
         let target = Target {
             id,
             place: Place::Header,
@@ -120,6 +126,7 @@ impl Editor {
         let menu_to_close = menu.clone();
         let editor = self.clone();
         let original = title.to_owned();
+        let find = Rc::new(find);
         let action = incular::widgets::internal::ActionSurface::with_child(
             Text::new(title)
                 .style(
@@ -139,39 +146,21 @@ impl Editor {
             let editor = editor.clone();
             let original = original.clone();
             let close = menu_to_close.clone();
+            let close_find = menu_to_close.clone();
+            let find = find.clone();
             let menu_search = menu_to_close.clone();
-            let row = Row::new(vec![
-                icon("pencil", 16.0, MUTED),
-                Text::new("Rename thread")
-                    .style(typography::interface().font_size(14.0).color(INK))
-                    .into(),
-            ])
-            .spacing(8.0)
-            .cross_axis_alignment(CrossAxisAlignment::Center);
-            let button = Button::with_child(
-                "Rename thread",
-                Container::new()
-                    .padding(EdgeInsets::symmetric(8.0, 0.0))
-                    .child(row)
-                    .into(),
-            )
-            .style(
-                ButtonStyle::new()
-                    .variant(ButtonVariant::Ghost)
-                    .background(WHITE)
-                    .border_radius(6.0)
-                    .alignment(Alignment::CENTER_LEFT)
-                    .fixed_size(Size::new(160.0, 28.0))
-                    .padding(EdgeInsets::ZERO),
-            )
-            .on_click(move || {
+            let find = menu_row("Find in thread", "text-search", move || {
+                close_find.close();
+                find();
+            });
+            let rename = menu_row("Rename thread", "pencil", move || {
                 close.close();
                 editor.start(id, &original, Place::Header);
             });
             let width = 168.0;
             let panel = Container::new()
                 .width(width)
-                .height(36.0)
+                .height(64.0)
                 .padding(EdgeInsets::all(4.0))
                 .decoration(
                     BoxDecoration::new()
@@ -179,7 +168,7 @@ impl Editor {
                         .border(Border::new(1.0, RULE))
                         .border_radius(BorderRadius::circular(8.0)),
                 )
-                .child(button);
+                .child(Column::new(vec![find, rename]).main_axis_size(MainAxisSize::Min));
             let x = info
                 .anchor_rect
                 .origin
@@ -284,4 +273,33 @@ impl Editor {
             })
             .into()
     }
+}
+
+fn menu_row(label: &str, slug: &str, activate: impl Fn() + 'static) -> Widget {
+    let row = Row::new(vec![
+        icon(slug, 16.0, MUTED),
+        Text::new(label)
+            .style(typography::interface().font_size(14.0).color(INK))
+            .into(),
+    ])
+    .spacing(8.0)
+    .cross_axis_alignment(CrossAxisAlignment::Center);
+    Button::with_child(
+        label,
+        Container::new()
+            .padding(EdgeInsets::symmetric(8.0, 0.0))
+            .child(row)
+            .into(),
+    )
+    .style(
+        ButtonStyle::new()
+            .variant(ButtonVariant::Ghost)
+            .background(WHITE)
+            .border_radius(6.0)
+            .alignment(Alignment::CENTER_LEFT)
+            .fixed_size(Size::new(160.0, 28.0))
+            .padding(EdgeInsets::ZERO),
+    )
+    .on_click(activate)
+    .into()
 }

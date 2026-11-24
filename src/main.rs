@@ -259,6 +259,26 @@ fn application_with_transport(
                 let find_settings = settings_open.clone();
                 let find_picker = picker.clone();
                 let shortcut_thread = current.as_ref().map(|turn| turn.id);
+                let find_selection = selected_thread.clone();
+                let find_jump = message_jump.clone();
+                let find_input = thread_find_input.clone();
+                let open_find: Rc<dyn Fn()> = Rc::new(move || {
+                    let Some(thread) = shortcut_thread else {
+                        return;
+                    };
+                    if find_settings.get()
+                        || find_picker.get() != Picker::Closed
+                        || find_input.preedit().is_some()
+                        || find_jump.get().is_some_and(|open| open.thread == thread)
+                    {
+                        return;
+                    }
+                    if let Some(turn) = find_selection.get().filter(|turn| turn.id == thread) {
+                        find_input.clear();
+                        find_jump.set(Some(message_jump::Jump::new(&turn, String::new(), None)));
+                    }
+                });
+                let menu_find = open_find.clone();
                 let workspace = workspace::draft(
                     title,
                     project_icon,
@@ -294,6 +314,7 @@ fn application_with_transport(
                             }
                         }
                     },
+                    move || menu_find(),
                     history_error.get(),
                     sidebar_search.clone(),
                     add_project,
@@ -387,10 +408,7 @@ fn application_with_transport(
                         )
                     }),
                 );
-                if let Some(thread) = shortcut_thread {
-                    let selected = selected_thread.clone();
-                    let jump_state = message_jump.clone();
-                    let input = thread_find_input.clone();
+                if shortcut_thread.is_some() {
                     let modifiers = if cfg!(target_os = "macos") {
                         Modifiers::META
                     } else {
@@ -400,24 +418,7 @@ fn application_with_transport(
                         .shortcut(
                             SingleActivator::new(KeyboardKey::Character("f".into()), modifiers)
                                 .with_repeats(false),
-                            move || {
-                                if find_settings.get()
-                                    || find_picker.get() != Picker::Closed
-                                    || input.preedit().is_some()
-                                    || jump_state.get().is_some_and(|open| open.thread == thread)
-                                {
-                                    return;
-                                }
-                                if let Some(turn) = selected.get().filter(|turn| turn.id == thread)
-                                {
-                                    input.clear();
-                                    jump_state.set(Some(message_jump::Jump::new(
-                                        &turn,
-                                        String::new(),
-                                        None,
-                                    )));
-                                }
-                            },
+                            move || open_find(),
                         )
                         .into()
                 } else {
@@ -1502,6 +1503,15 @@ mod ui_tests {
             sim.focus("Find in thread").unwrap();
             sim.press(Code::Escape).unwrap();
             assert!(sim.focus("Find in thread").is_err());
+            sim.click("Thread actions for Needle first. needle twice.")
+                .unwrap();
+            sim.click("Find in thread").unwrap();
+            sim.focus("Close thread find").unwrap();
+            sim.type_into("Find in thread", "Café").unwrap();
+            sim.focus("1/1").unwrap();
+            sim.focus("Find in thread").unwrap();
+            sim.press(Code::Escape).unwrap();
+            assert!(sim.focus("Close thread find").is_err());
         });
     }
 

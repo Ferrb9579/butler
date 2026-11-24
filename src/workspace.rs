@@ -23,6 +23,7 @@ pub fn draft(
     find_input: TextEditingController,
     title_editor: crate::thread_title::Editor,
     rename: impl Fn(uuid::Uuid, &str) + 'static,
+    open_find: impl Fn() + 'static,
     history_error: Option<String>,
     search: Search,
     add_project: Option<impl Fn() + Clone + 'static>,
@@ -55,9 +56,12 @@ pub fn draft(
                     .take(72)
                     .collect()
             });
-        title_editor.view(turn.id, &saved_title, move |id, title| {
-            header_rename(id, title)
-        })
+        title_editor.view(
+            turn.id,
+            &saved_title,
+            move |id, title| header_rename(id, title),
+            open_find,
+        )
     } else {
         breadcrumb_text("New thread", INK)
     };
